@@ -6,6 +6,8 @@ A dependency-free CLI network toolkit written in Go:
   [Yandex Internetometer](https://yandex.ru/internet) API.
 - **`lan`** — measure raw TCP throughput to another machine on your local network.
 - **`ping`** — measure TCP-connect latency to **any** device (no agent needed).
+- **`httpdl`** — download-speed test against a device's existing HTTP server, by
+  address, with **no agent** on the target (download only; large response needed).
 - **`scan`** — scan TCP ports on a single IP.
 - **`discover`** — sweep a subnet and report which hosts have which ports open.
 
@@ -116,6 +118,28 @@ min 1.90 / avg 2.24 / max 3.11 ms   0% loss (5/5)
 
 If a device shows 100% loss, try a port it actually has open (`--port 443`,
 `22`, `445`, ...); a closed-but-reachable port still yields a valid RTT.
+
+### HTTP download to any device (no agent)
+
+Measures download speed straight from a device's own HTTP(S) server — you just
+give the address (`protocol://host:port/path`). Nothing needs to run on the
+target. This is a **download-only** approximation: it is only accurate when the
+target serves a large enough response (point it at a big file). Upload and true
+throughput still require the LAN client/server pair.
+
+```sh
+speedtest httpdl http://192.168.1.10:8080/big.iso
+speedtest httpdl 192.168.1.10            # bare host -> http://192.168.1.10/
+speedtest httpdl http://nas.local/f.bin --duration 20s --json
+```
+
+```
+Скачано:  118.44 MiB за 10.0 с
+Download: 99.34 Мбит/с
+```
+
+If the response is small (< 2 MiB) the result is flagged as unreliable — the
+device simply has no large HTTP resource to pull.
 
 ### Port scan (single host)
 

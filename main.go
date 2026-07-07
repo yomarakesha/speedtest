@@ -14,6 +14,7 @@ import (
 	"speedtest/internal/ping"
 	"speedtest/internal/portscan"
 	"speedtest/internal/speedtest"
+	"speedtest/internal/webspeed"
 )
 
 const usage = `speedtest - сетевой инструмент (CLI)
@@ -32,6 +33,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
 
   speedtest ping <host[:port]> [--count 5] [--port 80] [--timeout 2s]
         Замер задержки TCP-подключения до любого устройства (без агента).
+
+  speedtest httpdl <url|host[:port]> [--duration 10s] [--json]
+        Download-тест по HTTP до устройства без агента (качает с его
+        HTTP-сервера). Точен только при крупном ответе; upload недоступен.
 
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
         Скан TCP-портов одного хоста и список открытых.
@@ -70,6 +75,8 @@ func main() {
 		err = lan.Run(args)
 	case "ping":
 		err = ping.RunPing(args)
+	case "httpdl":
+		err = webspeed.RunHTTPDL(args)
 	case "scan":
 		err = portscan.RunScan(args)
 	case "discover":
