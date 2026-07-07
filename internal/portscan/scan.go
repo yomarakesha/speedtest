@@ -87,7 +87,7 @@ func RunScan(args []string) error {
 		return err
 	}
 	if len(pos) == 0 {
-		return fmt.Errorf("usage: speedtest scan <ip> [--ports ...]")
+		return fmt.Errorf("использование: speedtest scan <ip> [--ports ...]")
 	}
 	target := pos[0]
 
@@ -97,7 +97,7 @@ func RunScan(args []string) error {
 	}
 
 	if !*asJSON {
-		fmt.Printf("Scanning %s  (%d ports, timeout %s)\n", target, len(ports), *timeout)
+		fmt.Printf("Сканирую %s  (портов: %d, таймаут %s)\n", target, len(ports), *timeout)
 	}
 	start := time.Now()
 	open := scanHost(target, ports, *timeout, *workers)
@@ -118,14 +118,14 @@ func RunScan(args []string) error {
 		name = "  (" + res.Hostname + ")"
 	}
 	if len(open) == 0 {
-		fmt.Printf("No open ports found on %s%s (%.1fs).\n", target, name, elapsed.Seconds())
+		fmt.Printf("Открытых портов не найдено на %s%s (%.1f с).\n", target, name, elapsed.Seconds())
 		return nil
 	}
-	fmt.Printf("\nHost: %s%s\n\nPORT     STATE  SERVICE\n", target, name)
+	fmt.Printf("\nХост: %s%s\n\nПОРТ     СТАТУС   СЕРВИС\n", target, name)
 	for _, p := range res.Open {
-		fmt.Printf("%-8d open   %s\n", p.Port, p.Service)
+		fmt.Printf("%-8d открыт   %s\n", p.Port, p.Service)
 	}
-	fmt.Printf("\n%d open port(s) in %.1fs.\n", len(open), elapsed.Seconds())
+	fmt.Printf("\nОткрытых портов: %d за %.1f с.\n", len(open), elapsed.Seconds())
 	return nil
 }
 
@@ -164,11 +164,11 @@ func RunDiscover(args []string) error {
 	if network == "" {
 		auto, err := localCIDR()
 		if err != nil {
-			return fmt.Errorf("auto-detect subnet: %w (pass --cidr)", err)
+			return fmt.Errorf("не удалось определить подсеть: %w (укажите --cidr)", err)
 		}
 		network = auto
 		if !*asJSON {
-			fmt.Printf("Auto-detected subnet: %s\n", network)
+			fmt.Printf("Определена подсеть: %s\n", network)
 		}
 	}
 
@@ -188,24 +188,24 @@ func RunDiscover(args []string) error {
 	targets := hosts
 	if !*scanAll {
 		if !*asJSON {
-			fmt.Printf("Probing %d addresses for live hosts...\n", len(hosts))
+			fmt.Printf("Проверяю %d адресов на живые хосты...\n", len(hosts))
 		}
 		targets = filterAlive(hosts, *timeout, *workers)
 		if !*asJSON {
-			fmt.Printf("%d host(s) up.\n", len(targets))
+			fmt.Printf("Живых хостов: %d.\n", len(targets))
 		}
 	}
 	if len(targets) == 0 {
 		if *asJSON {
 			return printJSON([]HostResult{})
 		}
-		fmt.Println("(no live hosts found)")
+		fmt.Println("(живых хостов не найдено)")
 		return nil
 	}
 
 	// Phase 2: full port scan of the live hosts.
 	if !*asJSON {
-		fmt.Printf("Scanning %d host(s) x %d ports (timeout %s)...\n\n",
+		fmt.Printf("Сканирую %d хост(ов) x %d портов (таймаут %s)...\n\n",
 			len(targets), len(ports), *timeout)
 	}
 
@@ -271,7 +271,7 @@ func enrich(results []HostResult) {
 // printDiscoverTable renders results as an aligned table.
 func printDiscoverTable(results []HostResult) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "HOST\tNAME\tMAC\tVENDOR\tOPEN PORTS")
+	fmt.Fprintln(tw, "ХОСТ\tИМЯ\tMAC\tПРОИЗВОДИТЕЛЬ\tОТКРЫТЫЕ ПОРТЫ")
 	found := 0
 	for _, r := range results {
 		ports := "-"
@@ -283,7 +283,7 @@ func printDiscoverTable(results []HostResult) {
 			r.IP, dash(r.Hostname), dash(r.MAC), dash(r.Vendor), ports)
 	}
 	tw.Flush()
-	fmt.Printf("\n%d live host(s), %d with open ports.\n", len(results), found)
+	fmt.Printf("\nЖивых хостов: %d, с открытыми портами: %d.\n", len(results), found)
 }
 
 func dash(s string) string {

@@ -45,11 +45,11 @@ func parsePorts(spec string) ([]int, error) {
 		if lo, hi, ok := strings.Cut(part, "-"); ok {
 			a, err := strconv.Atoi(strings.TrimSpace(lo))
 			if err != nil {
-				return nil, fmt.Errorf("bad port range %q", part)
+				return nil, fmt.Errorf("некорректный диапазон портов %q", part)
 			}
 			b, err := strconv.Atoi(strings.TrimSpace(hi))
 			if err != nil {
-				return nil, fmt.Errorf("bad port range %q", part)
+				return nil, fmt.Errorf("некорректный диапазон портов %q", part)
 			}
 			if a > b {
 				a, b = b, a
@@ -62,13 +62,13 @@ func parsePorts(spec string) ([]int, error) {
 		} else {
 			p, err := strconv.Atoi(part)
 			if err != nil || !validPort(p) {
-				return nil, fmt.Errorf("bad port %q", part)
+				return nil, fmt.Errorf("некорректный порт %q", part)
 			}
 			seen[p] = struct{}{}
 		}
 	}
 	if len(seen) == 0 {
-		return nil, fmt.Errorf("no valid ports in %q", spec)
+		return nil, fmt.Errorf("нет корректных портов в %q", spec)
 	}
 	out := make([]int, 0, len(seen))
 	for p := range seen {

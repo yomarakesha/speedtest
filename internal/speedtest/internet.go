@@ -61,37 +61,37 @@ func RunInternet(args []string) error {
 	}
 
 	if !*asJSON {
-		fmt.Println("Fetching Yandex probe servers...")
+		fmt.Println("Получаю серверы Yandex...")
 	}
 	probes, err := fetchProbes(client)
 	if err != nil {
-		return fmt.Errorf("get probes: %w", err)
+		return fmt.Errorf("получение серверов: %w", err)
 	}
 
 	res := Result{}
 
 	if !*asJSON {
-		fmt.Print("Ping...     ")
+		fmt.Print("Пинг...     ")
 	}
 	res.PingMs = measurePing(client, probes.Latency.Probes, *attempts)
 	if !*asJSON {
-		fmt.Printf("%.1f ms\n", res.PingMs)
+		fmt.Printf("%.1f мс\n", res.PingMs)
 	}
 
 	if !*asJSON {
-		fmt.Print("Download... ")
+		fmt.Print("Загрузка...  ")
 	}
 	res.DownloadMbps = measureDownload(client, probes.Download.Probes)
 	if !*asJSON {
-		fmt.Printf("%.2f Mbps\n", res.DownloadMbps)
+		fmt.Printf("%.2f Мбит/с\n", res.DownloadMbps)
 	}
 
 	if !*asJSON {
-		fmt.Print("Upload...   ")
+		fmt.Print("Отдача...    ")
 	}
 	res.UploadMbps = measureUpload(client, probes.Upload.Probes)
 	if !*asJSON {
-		fmt.Printf("%.2f Mbps\n", res.UploadMbps)
+		fmt.Printf("%.2f Мбит/с\n", res.UploadMbps)
 	}
 
 	if *asJSON {
@@ -121,7 +121,7 @@ func fetchProbes(client *http.Client) (*probesResponse, error) {
 		return nil, err
 	}
 	if len(pr.Download.Probes) == 0 {
-		return nil, fmt.Errorf("no download probes returned")
+		return nil, fmt.Errorf("сервер не вернул точки для загрузки")
 	}
 	return &pr, nil
 }

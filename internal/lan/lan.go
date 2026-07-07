@@ -28,7 +28,7 @@ const defaultAddr = ":5201"
 // Run dispatches `lan server` / `lan client`.
 func Run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: speedtest lan server|client ...")
+		return fmt.Errorf("использование: speedtest lan server|client ...")
 	}
 	switch args[0] {
 	case "server":
@@ -36,7 +36,7 @@ func Run(args []string) error {
 	case "client":
 		return runClient(args[1:])
 	default:
-		return fmt.Errorf("unknown lan subcommand %q (want server|client)", args[0])
+		return fmt.Errorf("неизвестная подкоманда lan %q (нужно server|client)", args[0])
 	}
 }
 
@@ -54,12 +54,12 @@ func runServer(args []string) error {
 	defer ln.Close()
 
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	fmt.Printf("LAN speedtest server listening on port %s\n", port)
-	fmt.Println("On another device run one of:")
+	fmt.Printf("Сервер LAN-теста слушает порт %s\n", port)
+	fmt.Println("На другом устройстве запустите одну из команд:")
 	for _, ip := range localIPs() {
 		fmt.Printf("    speedtest lan client %s:%s\n", ip, port)
 	}
-	fmt.Println("Waiting for connections... (Ctrl+C to stop)")
+	fmt.Println("Жду подключений... (Ctrl+C — остановить)")
 
 	for {
 		conn, err := ln.Accept()
@@ -93,7 +93,7 @@ func runClient(args []string) error {
 		return err
 	}
 	if len(pos) == 0 {
-		return fmt.Errorf("usage: speedtest lan client <host[:port]>")
+		return fmt.Errorf("использование: speedtest lan client <host[:port]>")
 	}
 	host := pos[0]
 	if _, _, err := net.SplitHostPort(host); err != nil {
@@ -105,15 +105,15 @@ func runClient(args []string) error {
 	}
 
 	if !*asJSON {
-		fmt.Printf("Target: %s   payload: %s per direction\n", host, util.Bytes(size))
+		fmt.Printf("Цель: %s   объём: %s в каждую сторону\n", host, util.Bytes(size))
 	}
 
 	ping, err := measureLatency(host, 5)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return fmt.Errorf("подключение: %w", err)
 	}
 	if !*asJSON {
-		fmt.Printf("Latency:  %.2f ms\n", ping)
+		fmt.Printf("Задержка: %.2f мс\n", ping)
 	}
 
 	down, err := transfer(host, 'D', size)
@@ -121,7 +121,7 @@ func runClient(args []string) error {
 		return notASpeedtestServer(host, err)
 	}
 	if !*asJSON {
-		fmt.Printf("Download: %.2f Mbps\n", util.Mbps(size, down))
+		fmt.Printf("Загрузка: %.2f Мбит/с\n", util.Mbps(size, down))
 	}
 
 	up, err := transfer(host, 'U', size)
@@ -129,7 +129,7 @@ func runClient(args []string) error {
 		return notASpeedtestServer(host, err)
 	}
 	if !*asJSON {
-		fmt.Printf("Upload:   %.2f Mbps\n", util.Mbps(size, up))
+		fmt.Printf("Отдача:   %.2f Мбит/с\n", util.Mbps(size, up))
 		return nil
 	}
 
@@ -148,10 +148,10 @@ func runClient(args []string) error {
 // user can act on: the target is reachable but is not running our LAN server.
 func notASpeedtestServer(host string, err error) error {
 	return fmt.Errorf(
-		"%s did not respond as a speedtest server (%v).\n"+
-			"  The LAN test needs THIS tool running on the other machine:\n"+
-			"    1. on %s run:  speedtest lan server\n"+
-			"    2. then point the client at it (default port 5201, not a random open port)",
+		"%s ответил не как speedtest-сервер (%v).\n"+
+			"  Для LAN-теста ЭТА программа должна быть запущена на другой машине:\n"+
+			"    1. на %s выполните:  speedtest lan server\n"+
+			"    2. затем наведите клиент на неё (порт по умолчанию 5201, не случайный открытый порт)",
 		host, err, hostOnly(host))
 }
 

@@ -39,7 +39,7 @@ func RunPing(args []string) error {
 		return err
 	}
 	if len(pos) == 0 {
-		return fmt.Errorf("usage: speedtest ping <host[:port]> [--count N] [--port P]")
+		return fmt.Errorf("использование: speedtest ping <host[:port]> [--count N] [--port P]")
 	}
 
 	host := pos[0]
@@ -48,7 +48,7 @@ func RunPing(args []string) error {
 	}
 
 	if !*asJSON {
-		fmt.Printf("PING (TCP) %s  -  %d attempts\n", host, *count)
+		fmt.Printf("ПИНГ (TCP) %s  -  попыток: %d\n", host, *count)
 	}
 
 	var rtts []float64
@@ -60,13 +60,13 @@ func RunPing(args []string) error {
 		if err != nil {
 			loss++
 			if !*asJSON {
-				fmt.Printf("  seq %d: failed (%v)\n", i+1, cleanErr(err))
+				fmt.Printf("  #%d: ошибка (%v)\n", i+1, cleanErr(err))
 			}
 		} else {
 			conn.Close()
 			rtts = append(rtts, rtt)
 			if !*asJSON {
-				fmt.Printf("  seq %d: %.2f ms\n", i+1, rtt)
+				fmt.Printf("  #%d: %.2f мс\n", i+1, rtt)
 			}
 		}
 		if i < *count-1 {
@@ -95,12 +95,12 @@ func RunPing(args []string) error {
 
 	fmt.Println()
 	if len(rtts) == 0 {
-		fmt.Printf("%s unreachable on this port (100%% loss).\n", host)
-		fmt.Println("Try a different --port (e.g. 443, 22, 445) - the device may")
-		fmt.Println("only be reachable on ports it actually has open.")
+		fmt.Printf("%s недоступен на этом порту (потери 100%%).\n", host)
+		fmt.Println("Попробуйте другой --port (напр. 443, 22, 445) — устройство")
+		fmt.Println("отвечает только на портах, которые у него реально открыты.")
 		return nil
 	}
-	fmt.Printf("min %.2f / avg %.2f / max %.2f ms   %.0f%% loss (%d/%d)\n",
+	fmt.Printf("мин %.2f / сред %.2f / макс %.2f мс   потери %.0f%% (%d/%d)\n",
 		res.MinMs, res.AvgMs, res.MaxMs, res.LossPct, res.Received, res.Sent)
 	return nil
 }

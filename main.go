@@ -16,44 +16,44 @@ import (
 	"speedtest/internal/speedtest"
 )
 
-const usage = `speedtest - CLI network toolkit
+const usage = `speedtest - сетевой инструмент (CLI)
 
-Run with no arguments to open an interactive menu.
+Запустите без аргументов, чтобы открыть интерактивное меню.
 
-Usage:
+Использование:
   speedtest internet [--json] [--attempts N]
-        Measure internet download/upload/ping via Yandex Internetometer.
+        Замер интернета (загрузка/отдача/пинг) через Yandex Интернетометр.
 
   speedtest lan server [--addr :5201]
-        Run a LAN speedtest server (run this on the other machine).
+        Запустить сервер LAN-теста (запускается на другой машине).
 
   speedtest lan client <host[:port]> [--bytes 100MB] [--json]
-        Measure download/upload/latency to a LAN speedtest server.
+        Замер загрузки/отдачи/задержки до сервера LAN-теста.
 
   speedtest ping <host[:port]> [--count 5] [--port 80] [--timeout 2s]
-        Measure TCP-connect latency to any device (no agent needed).
+        Замер задержки TCP-подключения до любого устройства (без агента).
 
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
-        Scan TCP ports on a single host and list the open ones.
+        Скан TCP-портов одного хоста и список открытых.
 
   speedtest discover [--cidr 192.168.1.0/24] [--ports 22,80,443,...]
                      [--timeout 400ms] [--workers 1000] [--all] [--json]
-        Sweep a subnet: live-host pre-check, then per-host open ports plus
-        hostname (reverse DNS), MAC and vendor (from the ARP table).
-        If --cidr is omitted the local subnet is auto-detected.
-        --all scans every address (skip the liveness pre-check).
+        Обзор подсети: проверка живых хостов, затем открытые порты по каждому,
+        плюс имя (обратный DNS), MAC и производитель (из таблицы ARP).
+        Без --cidr подсеть определяется автоматически.
+        --all сканирует все адреса (без проверки на живость).
 
-Most commands accept --json for machine-readable output.
+Большинство команд принимают --json для машинного вывода.
 
-Global:
-  -h, --help    Show this help.
+Общее:
+  -h, --help    Показать эту справку.
 `
 
 func main() {
 	// No arguments -> launch the interactive menu.
 	if len(os.Args) < 2 {
 		if err := menu.Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(os.Stderr, "ошибка:", err)
 			os.Exit(1)
 		}
 		return
@@ -78,12 +78,12 @@ func main() {
 		fmt.Print(usage)
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
+		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", cmd, usage)
 		os.Exit(1)
 	}
 
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "ошибка:", err)
 		os.Exit(1)
 	}
 }

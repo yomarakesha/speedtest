@@ -16,18 +16,18 @@ import (
 )
 
 const banner = `
-  ███ speedtest — network toolkit
+  ███ speedtest — сетевой инструмент
   ────────────────────────────────`
 
 const menu = `
-  1) Internet speed test        (download / upload / ping)
-  2) LAN speed test  - client   (measure to another machine)
-  3) LAN speed test  - server   (run here, others connect)
-  4) Ping any device - latency   (works on any IP, no agent)
-  5) Port scan       - one IP   (which ports are open)
-  6) Discover subnet - open ports per host on your LAN
-  7) Help
-  0) Exit
+  1) Скорость интернета          (загрузка / отдача / пинг)
+  2) Скорость по локалке - клиент (замер до другой машины)
+  3) Скорость по локалке - сервер (запустить здесь, к вам подключаются)
+  4) Пинг любого устройства       (любой IP, без агента)
+  5) Скан портов - один IP        (какие порты открыты)
+  6) Обзор сети - открытые порты по всем хостам локалки
+  7) Справка
+  0) Выход
 `
 
 var in = bufio.NewScanner(os.Stdin)
@@ -37,9 +37,9 @@ func Run() error {
 	fmt.Println(banner)
 	for {
 		fmt.Print(menu)
-		choice, ok := prompt("Choose", "")
+		choice, ok := prompt("Выбор", "")
 		if !ok { // stdin closed / EOF
-			fmt.Println("\nBye.")
+			fmt.Println("\nПока.")
 			return nil
 		}
 		if choice == "" {
@@ -63,58 +63,58 @@ func Run() error {
 			err = discover()
 		case "7":
 			printHelp()
-		case "0", "q", "quit", "exit":
-			fmt.Println("Bye.")
+		case "0", "q", "quit", "exit", "выход":
+			fmt.Println("Пока.")
 			return nil
 		default:
-			fmt.Printf("Unknown choice %q\n", choice)
+			fmt.Printf("Неизвестный пункт %q\n", choice)
 			continue
 		}
 
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(os.Stderr, "ошибка:", err)
 		}
 		pause()
 	}
 }
 
 func lanClient() error {
-	host, _ := prompt("Server IP (must run 'speedtest lan server')", "")
+	host, _ := prompt("IP сервера (на нём должен идти 'speedtest lan server')", "")
 	if host == "" {
-		return fmt.Errorf("host required")
+		return fmt.Errorf("нужен адрес хоста")
 	}
-	bytes, _ := prompt("Payload per direction (e.g. 100MB, 1GB)", "100MB")
+	bytes, _ := prompt("Объём в каждую сторону (напр. 100MB, 1GB)", "100MB")
 	return lan.Run([]string{"client", host, "--bytes", bytes})
 }
 
 func lanServer() error {
-	addr, _ := prompt("Listen address", ":5201")
-	fmt.Println("Starting server. Press Ctrl+C to stop.")
+	addr, _ := prompt("Адрес прослушивания", ":5201")
+	fmt.Println("Запуск сервера. Ctrl+C — остановить.")
 	return lan.Run([]string{"server", "--addr", addr})
 }
 
 func pingHost() error {
-	host, _ := prompt("Target host/IP", "")
+	host, _ := prompt("Хост/IP цели", "")
 	if host == "" {
-		return fmt.Errorf("host required")
+		return fmt.Errorf("нужен адрес хоста")
 	}
-	port, _ := prompt("Port to probe", "80")
-	count, _ := prompt("Attempts", "5")
+	port, _ := prompt("Порт для проверки", "80")
+	count, _ := prompt("Число попыток", "5")
 	return ping.RunPing([]string{host, "--port", port, "--count", count})
 }
 
 func scan() error {
-	ip, _ := prompt("Target IP", "")
+	ip, _ := prompt("IP цели", "")
 	if ip == "" {
-		return fmt.Errorf("IP required")
+		return fmt.Errorf("нужен IP")
 	}
-	ports, _ := prompt("Ports (e.g. 22,80,443 or 1-1024)", "1-1024")
+	ports, _ := prompt("Порты (напр. 22,80,443 или 1-1024)", "1-1024")
 	return portscan.RunScan([]string{ip, "--ports", ports})
 }
 
 func discover() error {
-	cidr, _ := prompt("Subnet CIDR (blank = auto-detect)", "")
-	ports, _ := prompt("Ports (blank = common services)", "")
+	cidr, _ := prompt("Подсеть CIDR (пусто = авто)", "")
+	ports, _ := prompt("Порты (пусто = частые сервисы)", "")
 	args := []string{}
 	if cidr != "" {
 		args = append(args, "--cidr", cidr)
@@ -127,17 +127,17 @@ func discover() error {
 
 func printHelp() {
 	fmt.Print(`
-  Internet   Measures your internet link against Yandex CDN nodes.
-  LAN client Connects to a "LAN server" on another machine and times
-             a raw TCP transfer in both directions.
-  LAN server Run this on the target machine first, then use LAN client
-             from another machine pointing at this machine's IP.
-  Ping       TCP-connect latency to ANY device (min/avg/max, loss).
-             No software needed on the target - unlike LAN speed test.
-  Port scan  TCP connect() scan of one host; lists ports that accept.
-  Discover   Scans every host in a subnet and shows open ports per IP.
+  Интернет   Меряет ваш канал в интернет через узлы Yandex CDN.
+  Локалка-клиент  Подключается к "серверу локалки" на другой машине и
+             гоняет TCP-данные в обе стороны.
+  Локалка-сервер  Сначала запустите его на целевой машине, затем с другой
+             машины запустите клиент, указав IP этой машины.
+  Пинг       Задержка TCP-подключения до ЛЮБОГО устройства (мин/сред/макс,
+             потери). На цели ничего ставить не нужно — в отличие от локалки.
+  Скан портов  TCP-скан одного хоста; показывает принимающие порты.
+  Обзор сети  Сканирует все хосты подсети и показывает открытые порты по IP.
 
-  Tip: you can also run commands directly, e.g.
+  Совет: команды можно запускать напрямую, напр.:
        speedtest internet
        speedtest scan 192.168.1.1 --ports 1-65535
        speedtest discover --cidr 192.168.1.0/24
@@ -166,7 +166,7 @@ func prompt(label, def string) (string, bool) {
 }
 
 func pause() {
-	fmt.Print("\n  -- press Enter to return to menu --")
+	fmt.Print("\n  -- Enter — вернуться в меню --")
 	in.Scan()
 	fmt.Println()
 }

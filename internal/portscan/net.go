@@ -59,7 +59,7 @@ func preferredSourceIP() (net.IP, error) {
 	defer conn.Close()
 	ip := conn.LocalAddr().(*net.UDPAddr).IP.To4()
 	if ip == nil {
-		return nil, fmt.Errorf("no IPv4 route to internet")
+		return nil, fmt.Errorf("нет IPv4-маршрута в интернет")
 	}
 	return ip, nil
 }
@@ -69,17 +69,17 @@ func preferredSourceIP() (net.IP, error) {
 func hostsInCIDR(cidr string) ([]string, error) {
 	_, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid CIDR %q: %w", cidr, err)
+		return nil, fmt.Errorf("некорректный CIDR %q: %w", cidr, err)
 	}
 	ones, bits := ipnet.Mask.Size()
 	if bits-ones > 16 {
-		return nil, fmt.Errorf("subnet %s too large (>65534 hosts); narrow it", cidr)
+		return nil, fmt.Errorf("подсеть %s слишком большая (>65534 хостов); сузьте её", cidr)
 	}
 
 	var hosts []string
 	ip := ipnet.IP.Mask(ipnet.Mask).To4()
 	if ip == nil {
-		return nil, fmt.Errorf("only IPv4 subnets supported")
+		return nil, fmt.Errorf("поддерживаются только IPv4-подсети")
 	}
 	for cur := cloneIP(ip); ipnet.Contains(cur); incIP(cur) {
 		hosts = append(hosts, cur.String())

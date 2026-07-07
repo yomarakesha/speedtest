@@ -34,7 +34,7 @@ func ParseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 func ParseSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, fmt.Errorf("empty size")
+		return 0, fmt.Errorf("пустой размер")
 	}
 	up := strings.ToUpper(s)
 	up = strings.TrimSuffix(up, "B") // allow "MB" and "M" alike
@@ -51,7 +51,7 @@ func ParseSize(s string) (int64, error) {
 
 	f, err := strconv.ParseFloat(strings.TrimSpace(up), 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid size %q", s)
+		return 0, fmt.Errorf("некорректный размер %q", s)
 	}
 	return int64(f * float64(mult)), nil
 }
