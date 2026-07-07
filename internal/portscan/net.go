@@ -1,9 +1,24 @@
 package portscan
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"strings"
+	"time"
 )
+
+// reverseDNS returns the first PTR hostname for ip, or "" if none resolves
+// within the timeout. Bounded so a slow resolver can't stall a scan.
+func reverseDNS(ip string, timeout time.Duration) string {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+	if err != nil || len(names) == 0 {
+		return ""
+	}
+	return strings.TrimSuffix(names[0], ".")
+}
 
 // localCIDR returns the network (in CIDR form, e.g. "192.168.1.0/24") of the
 // interface the OS would actually use to reach the internet. This avoids

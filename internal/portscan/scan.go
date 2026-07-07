@@ -3,12 +3,15 @@
 package portscan
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
+	"os"
 	"sort"
+	"strings"
 	"sync"
-	"sync/atomic"
+	"text/tabwriter"
 	"time"
 
 	"speedtest/internal/util"
@@ -59,12 +62,26 @@ func scanHost(host string, ports []int, timeout time.Duration, workers int) []in
 	return open
 }
 
+// PortInfo is one open port and its guessed service.
+type PortInfo struct {
+	Port    int    `json:"port"`
+	Service string `json:"service,omitempty"`
+}
+
+// ScanResult is the outcome of scanning a single host.
+type ScanResult struct {
+	Host     string     `json:"host"`
+	Hostname string     `json:"hostname,omitempty"`
+	Open     []PortInfo `json:"open"`
+}
+
 // RunScan is the CLI entry point for `speedtest scan <ip>`.
 func RunScan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	portSpec := fs.String("ports", "1-1024", "ports to scan (e.g. 22,80,443 or 1-65535)")
 	timeout := fs.Duration("timeout", 500*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 500, "concurrent connections")
+	asJSON := fs.Bool("json", false, "output result as JSON")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
 		return err
@@ -79,21 +96,55 @@ func RunScan(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Scanning %s  (%d ports, timeout %s)\n", target, len(ports), *timeout)
+	if !*asJSON {
+		fmt.Printf("Scanning %s  (%d ports, timeout %s)\n", target, len(ports), *timeout)
+	}
 	start := time.Now()
 	open := scanHost(target, ports, *timeout, *workers)
 	elapsed := time.Since(start)
 
+	res := ScanResult{
+		Host:     target,
+		Hostname: reverseDNS(target, time.Second),
+		Open:     toPortInfos(open),
+	}
+
+	if *asJSON {
+		return printJSON(res)
+	}
+
+	name := ""
+	if res.Hostname != "" {
+		name = "  (" + res.Hostname + ")"
+	}
 	if len(open) == 0 {
-		fmt.Printf("No open ports found (%.1fs).\n", elapsed.Seconds())
+		fmt.Printf("No open ports found on %s%s (%.1fs).\n", target, name, elapsed.Seconds())
 		return nil
 	}
-	fmt.Printf("\nPORT     STATE  SERVICE\n")
-	for _, p := range open {
-		fmt.Printf("%-8d open   %s\n", p, serviceName(p))
+	fmt.Printf("\nHost: %s%s\n\nPORT     STATE  SERVICE\n", target, name)
+	for _, p := range res.Open {
+		fmt.Printf("%-8d open   %s\n", p.Port, p.Service)
 	}
 	fmt.Printf("\n%d open port(s) in %.1fs.\n", len(open), elapsed.Seconds())
 	return nil
+}
+
+// toPortInfos attaches service names to a sorted list of open ports.
+func toPortInfos(ports []int) []PortInfo {
+	out := make([]PortInfo, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, PortInfo{Port: p, Service: serviceName(p)})
+	}
+	return out
+}
+
+// HostResult is one discovered host with identity and open ports.
+type HostResult struct {
+	IP       string     `json:"ip"`
+	Hostname string     `json:"hostname,omitempty"`
+	MAC      string     `json:"mac,omitempty"`
+	Vendor   string     `json:"vendor,omitempty"`
+	Open     []PortInfo `json:"open"`
 }
 
 // RunDiscover is the CLI entry point for `speedtest discover`.
@@ -103,6 +154,8 @@ func RunDiscover(args []string) error {
 	portSpec := fs.String("ports", "", "ports per host (default: common services)")
 	timeout := fs.Duration("timeout", 400*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 1000, "global concurrent connections")
+	scanAll := fs.Bool("all", false, "scan every address, skip the liveness pre-check")
+	asJSON := fs.Bool("json", false, "output result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -114,7 +167,9 @@ func RunDiscover(args []string) error {
 			return fmt.Errorf("auto-detect subnet: %w (pass --cidr)", err)
 		}
 		network = auto
-		fmt.Printf("Auto-detected subnet: %s\n", network)
+		if !*asJSON {
+			fmt.Printf("Auto-detected subnet: %s\n", network)
+		}
 	}
 
 	hosts, err := hostsInCIDR(network)
@@ -129,21 +184,36 @@ func RunDiscover(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Sweeping %d hosts x %d ports (timeout %s)...\n\n",
-		len(hosts), len(ports), *timeout)
-
-	type finding struct {
-		ip   string
-		open []int
+	// Phase 1: liveness pre-check so we only deep-scan hosts that exist.
+	targets := hosts
+	if !*scanAll {
+		if !*asJSON {
+			fmt.Printf("Probing %d addresses for live hosts...\n", len(hosts))
+		}
+		targets = filterAlive(hosts, *timeout, *workers)
+		if !*asJSON {
+			fmt.Printf("%d host(s) up.\n", len(targets))
+		}
 	}
-	results := make([]finding, len(hosts))
+	if len(targets) == 0 {
+		if *asJSON {
+			return printJSON([]HostResult{})
+		}
+		fmt.Println("(no live hosts found)")
+		return nil
+	}
 
-	// Global connection budget across all hosts.
-	sem := make(chan struct{}, *workers)
+	// Phase 2: full port scan of the live hosts.
+	if !*asJSON {
+		fmt.Printf("Scanning %d host(s) x %d ports (timeout %s)...\n\n",
+			len(targets), len(ports), *timeout)
+	}
+
+	results := make([]HostResult, len(targets))
+	sem := make(chan struct{}, *workers) // global connection budget
 	var wg sync.WaitGroup
-	var scanned atomic.Int64
 
-	for i, h := range hosts {
+	for i, h := range targets {
 		wg.Add(1)
 		go func(i int, host string) {
 			defer wg.Done()
@@ -165,49 +235,83 @@ func RunDiscover(args []string) error {
 			}
 			inner.Wait()
 			sort.Ints(open)
-			results[i] = finding{ip: host, open: open}
-			scanned.Add(1)
+			results[i] = HostResult{IP: host, Open: toPortInfos(open)}
 		}(i, h)
 	}
 	wg.Wait()
 
-	found := 0
-	fmt.Printf("%-16s OPEN PORTS\n", "HOST")
-	for _, r := range results {
-		if len(r.open) == 0 {
-			continue
-		}
-		found++
-		fmt.Printf("%-16s %s\n", r.ip, formatPorts(r.open))
+	// Enrich with identity: ARP (MAC + vendor) and reverse DNS.
+	enrich(results)
+
+	if *asJSON {
+		return printJSON(results)
 	}
-	if found == 0 {
-		fmt.Println("(no hosts with open ports found)")
-	} else {
-		fmt.Printf("\n%d host(s) with open ports.\n", found)
-	}
+	printDiscoverTable(results)
 	return nil
 }
 
-// formatPorts renders open ports with service labels, e.g. "22(ssh) 80(http)".
-func formatPorts(ports []int) string {
-	parts := make([]string, 0, len(ports))
-	for _, p := range ports {
-		if s := serviceName(p); s != "" {
-			parts = append(parts, fmt.Sprintf("%d(%s)", p, s))
-		} else {
-			parts = append(parts, fmt.Sprint(p))
+// enrich fills in Hostname, MAC and Vendor for each result.
+func enrich(results []HostResult) {
+	arp := arpTable()
+	var wg sync.WaitGroup
+	for i := range results {
+		if mac, ok := arp[results[i].IP]; ok {
+			results[i].MAC = mac
+			results[i].Vendor = vendorForMAC(mac)
 		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i].Hostname = reverseDNS(results[i].IP, time.Second)
+		}(i)
 	}
-	return joinSpace(parts)
+	wg.Wait()
 }
 
-func joinSpace(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += " "
+// printDiscoverTable renders results as an aligned table.
+func printDiscoverTable(results []HostResult) {
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "HOST\tNAME\tMAC\tVENDOR\tOPEN PORTS")
+	found := 0
+	for _, r := range results {
+		ports := "-"
+		if len(r.Open) > 0 {
+			ports = formatPorts(r.Open)
+			found++
 		}
-		out += p
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			r.IP, dash(r.Hostname), dash(r.MAC), dash(r.Vendor), ports)
 	}
-	return out
+	tw.Flush()
+	fmt.Printf("\n%d live host(s), %d with open ports.\n", len(results), found)
+}
+
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// formatPorts renders open ports with service labels, e.g. "22(ssh) 80(http)".
+func formatPorts(ports []PortInfo) string {
+	parts := make([]string, 0, len(ports))
+	for _, p := range ports {
+		if p.Service != "" {
+			parts = append(parts, fmt.Sprintf("%d(%s)", p.Port, p.Service))
+		} else {
+			parts = append(parts, fmt.Sprint(p.Port))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// printJSON writes v as indented JSON to stdout.
+func printJSON(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
 }

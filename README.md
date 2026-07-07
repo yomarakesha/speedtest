@@ -9,12 +9,19 @@ A dependency-free CLI network toolkit written in Go:
 - **`scan`** — scan TCP ports on a single IP.
 - **`discover`** — sweep a subnet and report which hosts have which ports open.
 
-Uses only the Go standard library — no external modules.
+Uses only the Go standard library — no external modules. Most commands accept
+`--json` for machine-readable output.
 
 ## Build
 
 ```sh
 go build -o speedtest.exe .
+```
+
+## Test
+
+```sh
+go test ./...
 ```
 
 ## Interactive menu
@@ -135,15 +142,28 @@ speedtest discover --cidr 192.168.0.0/24 --timeout 400ms --workers 1500
 ```
 
 ```
-HOST             OPEN PORTS
-192.168.1.1      53(dns) 80(http) 443(https)
-192.168.1.10     22(ssh) 445(smb) 3389(rdp)
-192.168.1.42     80(http) 8080(http-proxy)
+Probing 254 addresses for live hosts...
+3 host(s) up.
+Scanning 3 host(s) x 25 ports (timeout 400ms)...
+
+HOST           NAME       MAC                VENDOR       OPEN PORTS
+192.168.1.1    -          9c:9d:7e:cb:a2:ad  -            53(dns) 80(http) 443(https)
+192.168.1.10   my-laptop  b8:27:eb:11:22:33  RaspberryPi  22(ssh) 445(smb)
+192.168.1.42   tv         84:25:db:aa:bb:cc  Samsung      80(http) 8080(http-proxy)
+
+3 live host(s), 2 with open ports.
 ```
 
-Without `--ports`, discovery scans a compact set of common service ports.
-Without `--cidr`, the subnet of the interface your OS uses to reach the internet
-is auto-detected. Subnets larger than /16 are rejected to avoid runaway scans.
+Discovery runs in two phases: a fast **liveness pre-check** (only hosts that
+answer are deep-scanned — much faster on sparse subnets), then a full port scan
+of the live hosts. Each host is annotated with its **hostname** (reverse DNS),
+**MAC** and **vendor** (from the system ARP table + a built-in OUI table).
+
+- Without `--ports`, a compact set of common service ports is scanned.
+- Without `--cidr`, the subnet of your internet-facing interface is auto-detected.
+- `--all` skips the liveness pre-check and scans every address.
+- `--json` emits structured results for scripting.
+- Subnets larger than /16 are rejected to avoid runaway scans.
 
 ## Notes
 

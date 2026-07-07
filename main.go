@@ -37,9 +37,13 @@ Usage:
         Scan TCP ports on a single host and list the open ones.
 
   speedtest discover [--cidr 192.168.1.0/24] [--ports 22,80,443,...]
-                     [--timeout 400ms] [--workers 1000]
-        Sweep a subnet and show which IPs have which ports open.
-        If --cidr is omitted the local /24 is auto-detected.
+                     [--timeout 400ms] [--workers 1000] [--all] [--json]
+        Sweep a subnet: live-host pre-check, then per-host open ports plus
+        hostname (reverse DNS), MAC and vendor (from the ARP table).
+        If --cidr is omitted the local subnet is auto-detected.
+        --all scans every address (skip the liveness pre-check).
+
+Most commands accept --json for machine-readable output.
 
 Global:
   -h, --help    Show this help.

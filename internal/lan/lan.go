@@ -13,6 +13,7 @@ package lan
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -86,6 +87,7 @@ func serve(conn net.Conn) {
 func runClient(args []string) error {
 	fs := flag.NewFlagSet("lan client", flag.ContinueOnError)
 	sizeStr := fs.String("bytes", "100MB", "bytes to transfer per direction")
+	asJSON := fs.Bool("json", false, "output result as JSON")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
 		return err
@@ -102,25 +104,43 @@ func runClient(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Target: %s   payload: %s per direction\n", host, util.Bytes(size))
+	if !*asJSON {
+		fmt.Printf("Target: %s   payload: %s per direction\n", host, util.Bytes(size))
+	}
 
 	ping, err := measureLatency(host, 5)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
-	fmt.Printf("Latency:  %.2f ms\n", ping)
+	if !*asJSON {
+		fmt.Printf("Latency:  %.2f ms\n", ping)
+	}
 
 	down, err := transfer(host, 'D', size)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
-	fmt.Printf("Download: %.2f Mbps\n", util.Mbps(size, down))
+	if !*asJSON {
+		fmt.Printf("Download: %.2f Mbps\n", util.Mbps(size, down))
+	}
 
 	up, err := transfer(host, 'U', size)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
-	fmt.Printf("Upload:   %.2f Mbps\n", util.Mbps(size, up))
+	if !*asJSON {
+		fmt.Printf("Upload:   %.2f Mbps\n", util.Mbps(size, up))
+		return nil
+	}
+
+	res := struct {
+		Target       string  `json:"target"`
+		LatencyMs    float64 `json:"latency_ms"`
+		DownloadMbps float64 `json:"download_mbps"`
+		UploadMbps   float64 `json:"upload_mbps"`
+	}{host, ping, util.Mbps(size, down), util.Mbps(size, up)}
+	b, _ := json.MarshalIndent(res, "", "  ")
+	fmt.Println(string(b))
 	return nil
 }
 
