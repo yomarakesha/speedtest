@@ -79,11 +79,11 @@ func Run() error {
 }
 
 func lanClient() error {
-	host, _ := prompt("Server host (ip[:port])", "")
+	host, _ := prompt("Server IP (must run 'speedtest lan server')", "")
 	if host == "" {
 		return fmt.Errorf("host required")
 	}
-	bytes, _ := prompt("Bytes per direction", "100MB")
+	bytes, _ := prompt("Payload per direction (e.g. 100MB, 1GB)", "100MB")
 	return lan.Run([]string{"client", host, "--bytes", bytes})
 }
 

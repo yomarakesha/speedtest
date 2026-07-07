@@ -118,7 +118,7 @@ func runClient(args []string) error {
 
 	down, err := transfer(host, 'D', size)
 	if err != nil {
-		return fmt.Errorf("download: %w", err)
+		return notASpeedtestServer(host, err)
 	}
 	if !*asJSON {
 		fmt.Printf("Download: %.2f Mbps\n", util.Mbps(size, down))
@@ -126,7 +126,7 @@ func runClient(args []string) error {
 
 	up, err := transfer(host, 'U', size)
 	if err != nil {
-		return fmt.Errorf("upload: %w", err)
+		return notASpeedtestServer(host, err)
 	}
 	if !*asJSON {
 		fmt.Printf("Upload:   %.2f Mbps\n", util.Mbps(size, up))
@@ -142,6 +142,25 @@ func runClient(args []string) error {
 	b, _ := json.MarshalIndent(res, "", "  ")
 	fmt.Println(string(b))
 	return nil
+}
+
+// notASpeedtestServer turns a raw transfer failure into an explanation the
+// user can act on: the target is reachable but is not running our LAN server.
+func notASpeedtestServer(host string, err error) error {
+	return fmt.Errorf(
+		"%s did not respond as a speedtest server (%v).\n"+
+			"  The LAN test needs THIS tool running on the other machine:\n"+
+			"    1. on %s run:  speedtest lan server\n"+
+			"    2. then point the client at it (default port 5201, not a random open port)",
+		host, err, hostOnly(host))
+}
+
+// hostOnly strips the :port from a host:port string for display.
+func hostOnly(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return hostport
 }
 
 // transfer opens a connection, issues one command and times the payload.
