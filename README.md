@@ -1,197 +1,122 @@
 # speedtest
 
-A dependency-free CLI network toolkit written in Go:
+A full-screen, live-updating **network toolkit** for the terminal, written in Go.
+Launch it with no arguments and you get a cinematic TUI dashboard; every tool is
+also available as a scriptable subcommand. The interface is in Russian.
 
-- **`internet`** — measure internet download / upload / ping via the public
-  [Yandex Internetometer](https://yandex.ru/internet) API.
-- **`lan`** — measure raw TCP throughput to another machine on your local network.
-- **`ping`** — measure TCP-connect latency to **any** device (no agent needed).
-- **`httpdl`** — download-speed test against a device's existing HTTP server, by
-  address, with **no agent** on the target (download only; large response needed).
-- **`scan`** — scan TCP ports on a single IP.
-- **`discover`** — sweep a subnet and report which hosts have which ports open.
+![CI](https://github.com/yomarakesha/speedtest/actions/workflows/ci.yml/badge.svg)
 
-Uses only the Go standard library — no external modules. Most commands accept
-`--json` for machine-readable output.
+## What it does
 
-## Build
+| Tab / command | What it measures |
+|---|---|
+| **Интернет** / `internet` | Internet download / upload / ping via the public [Yandex Internetometer](https://yandex.ru/internet) API, with live animated sparklines. |
+| **Локалка** / `lan` | Raw TCP throughput to another machine running `lan server`. |
+| **Пинг** / `ping` | TCP-connect latency to **any** device (no agent), gping-style live graph. |
+| **Трейс** / `trace` | Traceroute + continuous per-hop ping (mtr/trippy-style), live loss & RTT. |
+| **HTTP** / `httpdl` | Download speed from any device's own HTTP(S) server — no agent on target. |
+| **Скан** / `scan` | TCP port scan of a single host with a live progress bar. |
+| **Обзор** / `discover` | Sweep the local subnet: live hosts, open ports, hostname, MAC, vendor. |
+| **История** / `history` | Every run is saved automatically; trend sparkline + CSV/JSON export. |
+
+## The TUI dashboard
 
 ```sh
-go build -o speedtest.exe .
+speedtest            # launch the full-screen dashboard
 ```
 
-## Test
+- **Tab / Shift+Tab** or **1-8** — switch tabs, **← →** / **h l** also work.
+- **?** — help overlay. **q** / **Ctrl+C** — quit.
+- Each tab drives the same measurement engine as its headless command, so the
+  numbers you see live are identical to what `--json` reports.
+
+Traceroute sends real ICMP **without administrator/root**: on Windows via the IP
+Helper API (`IcmpSendEcho`), on Linux/macOS via unprivileged ICMP datagram
+sockets.
+
+## Install / build
+
+Requires Go 1.26+.
 
 ```sh
+go build -o speedtest .      # or speedtest.exe on Windows
 go test ./...
 ```
 
-## Interactive menu
+Pre-built binaries for Linux, macOS and Windows (amd64 + arm64) are attached to
+each GitHub release (built with GoReleaser).
 
-Run with no arguments to get a menu that walks you through each tool:
+## Headless commands
 
-```sh
-speedtest.exe
-```
-
-```
-  ███ speedtest — network toolkit
-  ────────────────────────────────
-
-  1) Internet speed test        (download / upload / ping)
-  2) LAN speed test  - client   (measure to another machine)
-  3) LAN speed test  - server   (run here, others connect)
-  4) Port scan       - one IP   (which ports are open)
-  5) Discover subnet - open ports per host on your LAN
-  6) Help
-  0) Exit
-  Choose:
-```
-
-Each option prompts for its parameters (with sensible defaults in `[brackets]`).
-Every menu action is also available directly as a subcommand — see below.
-
-## Usage (direct commands)
+Everything the dashboard does is available directly; add `--json` for
+machine-readable output.
 
 ### Internet speed
-
 ```sh
 speedtest internet
-speedtest internet --json            # machine-readable output
-speedtest internet --attempts 5      # more ping samples
+speedtest internet --json --attempts 5
 ```
-
-```
-Ping...     18.3 ms
-Download... 94.71 Mbps
-Upload...   38.02 Mbps
-```
-
-Download and upload run three parallel streams against the nearest Yandex CDN
-nodes and report combined throughput. The measurement window is capped at 30s
-per direction, so on slow links the result is the sustained rate over that window.
 
 ### LAN speed
-
-Run the server on one machine:
-
+Run the server on one machine, the client on another:
 ```sh
 speedtest lan server                 # listens on :5201
-speedtest lan server --addr :9000
-```
-
-Run the client on another (or the same) machine, pointing at the server's IP:
-
-```sh
-speedtest lan client 192.168.1.50
 speedtest lan client 192.168.1.50 --bytes 500MB
-speedtest lan client 192.168.1.50:9000
 ```
 
-```
-Target: 192.168.1.50:5201   payload: 500.00 MiB per direction
-Latency:  0.42 ms
-Download: 942.10 Mbps
-Upload:   911.55 Mbps
-```
-
-Sizes accept `K`/`M`/`G` suffixes (powers of 1024); a bare number is bytes.
-
-### Ping any device (latency)
-
-Works against any host that has a reachable TCP port — no software needed on
-the target. Uses TCP connect time as the round-trip measurement.
-
+### Ping any device
 ```sh
-speedtest ping 192.168.1.1
 speedtest ping 192.168.1.1 --port 443 --count 10
-speedtest ping example.com:22
 ```
+TCP-connect time is the RTT, so any reachable port works. 100% loss usually just
+means the probed port is filtered — try `--port 443`, `22`, `445`.
 
-```
-PING (TCP) 192.168.1.1:80  -  5 attempts
-  seq 1: 2.31 ms
-  seq 2: 1.98 ms
-  ...
-min 1.90 / avg 2.24 / max 3.11 ms   0% loss (5/5)
-```
-
-If a device shows 100% loss, try a port it actually has open (`--port 443`,
-`22`, `445`, ...); a closed-but-reachable port still yields a valid RTT.
-
-### HTTP download to any device (no agent)
-
-Measures download speed straight from a device's own HTTP(S) server — you just
-give the address (`protocol://host:port/path`). Nothing needs to run on the
-target. This is a **download-only** approximation: it is only accurate when the
-target serves a large enough response (point it at a big file). Upload and true
-throughput still require the LAN client/server pair.
-
+### Traceroute + ping
 ```sh
-speedtest httpdl http://192.168.1.10:8080/big.iso
-speedtest httpdl 192.168.1.10            # bare host -> http://192.168.1.10/
-speedtest httpdl http://nas.local/f.bin --duration 20s --json
+speedtest trace 8.8.8.8            # live table until Ctrl+C
+speedtest trace ya.ru --json       # bounded run, JSON output
 ```
+Shows per-hop loss and last/avg/best/worst RTT, refreshed every round.
 
-```
-Скачано:  118.44 MiB за 10.0 с
-Download: 99.34 Мбит/с
-```
-
-If the response is small (< 2 MiB) the result is flagged as unreliable — the
-device simply has no large HTTP resource to pull.
-
-### Port scan (single host)
-
+### HTTP download (no agent)
 ```sh
-speedtest scan 192.168.1.1
-speedtest scan 192.168.1.1 --ports 22,80,443
-speedtest scan 10.0.0.5 --ports 1-65535 --timeout 800ms --workers 1000
+speedtest httpdl http://192.168.1.10:8080/big.iso --duration 20s
 ```
+Download-only estimate; accurate only against a large response.
 
-```
-PORT     STATE  SERVICE
-22       open   ssh
-80       open   http
-443      open   https
-```
-
-### Subnet discovery (who has what open)
-
+### Port scan / subnet discovery
 ```sh
-speedtest discover                                   # auto-detect local subnet
-speedtest discover --cidr 192.168.1.0/24
-speedtest discover --cidr 10.0.0.0/24 --ports 22,80,443,3389
-speedtest discover --cidr 192.168.0.0/24 --timeout 400ms --workers 1500
+speedtest scan 192.168.1.1 --ports 1-65535 --workers 1000
+speedtest discover                       # auto-detect local /24
+speedtest discover --cidr 10.0.0.0/24 --ports 22,80,443,3389 --json
+```
+Discovery does a fast liveness pre-check, then deep-scans only live hosts and
+annotates each with reverse-DNS name, MAC and vendor (system ARP table + OUI).
+
+### History & export
+```sh
+speedtest history                 # human-readable log
+speedtest history --export csv    # or: json
+```
+Runs are appended to `history.jsonl` under your OS config dir
+(`%AppData%\speedtest\` on Windows, `~/.config/speedtest/` on Linux,
+`~/Library/Application Support/speedtest/` on macOS). The **История** tab shows a
+download-speed trend and can export from inside the app (**c** = CSV, **j** = JSON).
+
+### Text menu (no graphics)
+```sh
+speedtest menu       # simple line-based menu, for terminals without a TUI
 ```
 
-```
-Probing 254 addresses for live hosts...
-3 host(s) up.
-Scanning 3 host(s) x 25 ports (timeout 400ms)...
+## Dependencies
 
-HOST           NAME       MAC                VENDOR       OPEN PORTS
-192.168.1.1    -          9c:9d:7e:cb:a2:ad  -            53(dns) 80(http) 443(https)
-192.168.1.10   my-laptop  b8:27:eb:11:22:33  RaspberryPi  22(ssh) 445(smb)
-192.168.1.42   tv         84:25:db:aa:bb:cc  Samsung      80(http) 8080(http-proxy)
-
-3 live host(s), 2 with open ports.
-```
-
-Discovery runs in two phases: a fast **liveness pre-check** (only hosts that
-answer are deep-scanned — much faster on sparse subnets), then a full port scan
-of the live hosts. Each host is annotated with its **hostname** (reverse DNS),
-**MAC** and **vendor** (from the system ARP table + a built-in OUI table).
-
-- Without `--ports`, a compact set of common service ports is scanned.
-- Without `--cidr`, the subnet of your internet-facing interface is auto-detected.
-- `--all` skips the liveness pre-check and scans every address.
-- `--json` emits structured results for scripting.
-- Subnets larger than /16 are rejected to avoid runaway scans.
+The dashboard uses the [Charm](https://charm.sh) stack — Bubble Tea, Lip Gloss,
+Bubbles — plus [ntcharts](https://github.com/NimbleMarkets/ntcharts) for graphs,
+and `golang.org/x/net` / `golang.org/x/sys` for the no-admin ICMP traceroute.
+The measurement engines themselves remain small and standard-library-based.
 
 ## Notes
 
-- Port scanning uses TCP connect() — it detects ports that **accept**
-  connections. Some firewalls/NAT gateways accept-then-reset, which can show
-  as false "open"; treat virtual-adapter results with suspicion.
-- Only scan hosts and networks you are authorized to test.
+- Port scanning uses TCP `connect()`; accept-then-reset firewalls can produce
+  false "open" results — treat virtual-adapter results with suspicion.
+- Only scan and probe hosts and networks you are authorized to test.

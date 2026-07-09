@@ -47,7 +47,7 @@ func RunHTTPDL(args []string) error {
 		fmt.Printf("Качаю с %s  (макс %s)...\n", url, *duration)
 	}
 
-	res, err := download(url, *duration)
+	res, err := download(url, *duration, nil)
 	if err != nil {
 		return err
 	}
@@ -67,9 +67,20 @@ func RunHTTPDL(args []string) error {
 	return nil
 }
 
+// Download is the streaming entry point used by the TUI: it downloads url for
+// up to maxDur, calling sample (may be nil) ~10x/second with the instantaneous
+// throughput in Mbps, and returns the final Result.
+func Download(ctx context.Context, url string, maxDur time.Duration, sample func(float64)) (Result, error) {
+	return downloadCtx(ctx, normalizeURL(url), maxDur, sample)
+}
+
 // download streams the URL, counting bytes until EOF or the deadline.
-func download(url string, maxDur time.Duration) (Result, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), maxDur)
+func download(url string, maxDur time.Duration, sample func(float64)) (Result, error) {
+	return downloadCtx(context.Background(), url, maxDur, sample)
+}
+
+func downloadCtx(parent context.Context, url string, maxDur time.Duration, sample func(float64)) (Result, error) {
+	ctx, cancel := context.WithTimeout(parent, maxDur)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -91,9 +102,16 @@ func download(url string, maxDur time.Duration) (Result, error) {
 
 	var total int64
 	buf := make([]byte, 64*1024)
+	lastN, lastT := int64(0), start
 	for {
 		n, rerr := resp.Body.Read(buf)
 		total += int64(n)
+		if sample != nil {
+			if dt := time.Since(lastT).Seconds(); dt >= 0.1 {
+				sample(float64(total-lastN) * 8 / dt / 1e6)
+				lastN, lastT = total, time.Now()
+			}
+		}
 		if rerr != nil {
 			break // EOF, deadline (context) or read error: stop and report
 		}

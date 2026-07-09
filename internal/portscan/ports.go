@@ -33,6 +33,19 @@ var defaultDiscoverPorts = []int{
 // serviceName returns the service label for a port, or "" if unknown.
 func serviceName(p int) string { return commonServices[p] }
 
+// ServiceName is the exported form of serviceName for UI callers.
+func ServiceName(p int) string { return commonServices[p] }
+
+// ParsePorts is the exported form of parsePorts for UI callers.
+func ParsePorts(spec string) ([]int, error) { return parsePorts(spec) }
+
+// DefaultDiscoverPorts returns a copy of the compact discovery port set.
+func DefaultDiscoverPorts() []int {
+	out := make([]int, len(defaultDiscoverPorts))
+	copy(out, defaultDiscoverPorts)
+	return out
+}
+
 // parsePorts expands a spec like "22,80,443", "1-1024" or "1-100,3389,8000-8100"
 // into a sorted, de-duplicated slice of port numbers.
 func parsePorts(spec string) ([]int, error) {

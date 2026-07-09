@@ -45,6 +45,68 @@ type Result struct {
 	UploadMbps   float64 `json:"upload_mbps"`
 }
 
+// Phase identifies which stage of the measurement a Progress update belongs to.
+type Phase int
+
+const (
+	PhasePing Phase = iota
+	PhaseDownload
+	PhaseUpload
+	PhaseDone
+)
+
+// Progress is a live update emitted during a measurement so a UI can animate
+// gauges/graphs. Mbps is the instantaneous throughput for the download/upload
+// phases; PingMs is filled on the ping phase.
+type Progress struct {
+	Phase  Phase
+	Mbps   float64
+	PingMs float64
+}
+
+// Options configures an internet measurement.
+type Options struct {
+	Attempts int // ping samples per latency probe
+}
+
+// Run performs a full internet measurement, calling cb (may be nil) with live
+// Progress updates, and returns the final Result. The TUI dashboard uses this;
+// the headless CLI (RunInternet) drives the same measure functions directly so
+// its text output is unchanged.
+func Run(ctx context.Context, opt Options, cb func(Progress)) (Result, error) {
+	if opt.Attempts <= 0 {
+		opt.Attempts = 3
+	}
+	client := newClient()
+	probes, err := fetchProbes(client)
+	if err != nil {
+		return Result{}, fmt.Errorf("получение серверов: %w", err)
+	}
+
+	var res Result
+	res.PingMs = measurePing(client, probes.Latency.Probes, opt.Attempts)
+	emit(cb, Progress{Phase: PhasePing, PingMs: res.PingMs})
+
+	res.DownloadMbps = measureDownload(client, probes.Download.Probes, func(m float64) {
+		emit(cb, Progress{Phase: PhaseDownload, Mbps: m})
+	})
+	res.UploadMbps = measureUpload(client, probes.Upload.Probes, func(m float64) {
+		emit(cb, Progress{Phase: PhaseUpload, Mbps: m})
+	})
+	emit(cb, Progress{Phase: PhaseDone})
+	return res, nil
+}
+
+func emit(cb func(Progress), p Progress) {
+	if cb != nil {
+		cb(p)
+	}
+}
+
+func newClient() *http.Client {
+	return &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 8}}
+}
+
 // RunInternet is the CLI entry point for `speedtest internet`.
 func RunInternet(args []string) error {
 	fs := flag.NewFlagSet("internet", flag.ContinueOnError)
@@ -54,11 +116,7 @@ func RunInternet(args []string) error {
 		return err
 	}
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: 8,
-		},
-	}
+	client := newClient()
 
 	if !*asJSON {
 		fmt.Println("Получаю серверы Yandex...")
@@ -81,7 +139,7 @@ func RunInternet(args []string) error {
 	if !*asJSON {
 		fmt.Print("Загрузка...  ")
 	}
-	res.DownloadMbps = measureDownload(client, probes.Download.Probes)
+	res.DownloadMbps = measureDownload(client, probes.Download.Probes, nil)
 	if !*asJSON {
 		fmt.Printf("%.2f Мбит/с\n", res.DownloadMbps)
 	}
@@ -89,7 +147,7 @@ func RunInternet(args []string) error {
 	if !*asJSON {
 		fmt.Print("Отдача...    ")
 	}
-	res.UploadMbps = measureUpload(client, probes.Upload.Probes)
+	res.UploadMbps = measureUpload(client, probes.Upload.Probes, nil)
 	if !*asJSON {
 		fmt.Printf("%.2f Мбит/с\n", res.UploadMbps)
 	}
@@ -162,8 +220,9 @@ func measurePing(client *http.Client, probes []probe, attempts int) float64 {
 }
 
 // measureDownload runs the 50mb probes as parallel streams and reports the
-// combined throughput in Mbps.
-func measureDownload(client *http.Client, probes []probe) float64 {
+// combined throughput in Mbps. sample (may be nil) is called ~10x/second with
+// the instantaneous throughput so a UI can draw a live graph.
+func measureDownload(client *http.Client, probes []probe, sample func(float64)) float64 {
 	var urls []string
 	for _, p := range probes {
 		if p.Timeout == 0 { // the big (50mb) probes have no short timeout
@@ -182,6 +241,8 @@ func measureDownload(client *http.Client, probes []probe) float64 {
 	defer cancel()
 
 	start := time.Now()
+	stopSampler := startSampler(&total, start, sample)
+	defer stopSampler()
 	for _, u := range urls {
 		wg.Add(1)
 		go func(url string) {
@@ -213,7 +274,8 @@ func measureDownload(client *http.Client, probes []probe) float64 {
 
 // measureUpload POSTs zero-filled payloads to the upload probes as parallel
 // streams and reports combined throughput in Mbps. Probe Size is in KiB.
-func measureUpload(client *http.Client, probes []probe) float64 {
+// sample (may be nil) receives instantaneous throughput ~10x/second.
+func measureUpload(client *http.Client, probes []probe, sample func(float64)) float64 {
 	var use []probe
 	for _, p := range probes {
 		if p.Timeout == 0 { // the larger payloads
@@ -230,6 +292,8 @@ func measureUpload(client *http.Client, probes []probe) float64 {
 	defer cancel()
 
 	start := time.Now()
+	stopSampler := startSampler(&total, start, sample)
+	defer stopSampler()
 	for _, p := range use {
 		wg.Add(1)
 		go func(p probe) {
@@ -255,6 +319,37 @@ func measureUpload(client *http.Client, probes []probe) float64 {
 	elapsed := time.Since(start)
 
 	return float64(total.Load()) * 8 / elapsed.Seconds() / 1e6
+}
+
+// startSampler polls the byte counter ~10x/second and reports the instantaneous
+// throughput (Mbps) over each interval via sample. It returns a stop function;
+// if sample is nil the sampler is a no-op. Safe to call stop more than once.
+func startSampler(total *atomic.Int64, start time.Time, sample func(float64)) func() {
+	if sample == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		t := time.NewTicker(100 * time.Millisecond)
+		defer t.Stop()
+		last := int64(0)
+		lastT := start
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				cur := total.Load()
+				dt := now.Sub(lastT).Seconds()
+				if dt > 0 {
+					sample(float64(cur-last) * 8 / dt / 1e6)
+				}
+				last, lastT = cur, now
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(stop) }) }
 }
 
 // countingZeroReader streams `remaining` zero bytes and counts what it emits.

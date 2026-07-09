@@ -9,17 +9,21 @@ import (
 	"fmt"
 	"os"
 
+	"speedtest/internal/history"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
 	"speedtest/internal/ping"
 	"speedtest/internal/portscan"
 	"speedtest/internal/speedtest"
+	"speedtest/internal/trace"
+	"speedtest/internal/tui"
 	"speedtest/internal/webspeed"
 )
 
 const usage = `speedtest - сетевой инструмент (CLI)
 
-Запустите без аргументов, чтобы открыть интерактивное меню.
+Запустите без аргументов, чтобы открыть полноэкранную панель (TUI).
+Команда 'menu' открывает простое текстовое меню (без графики).
 
 Использование:
   speedtest internet [--json] [--attempts N]
@@ -33,6 +37,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
 
   speedtest ping <host[:port]> [--count 5] [--port 80] [--timeout 2s]
         Замер задержки TCP-подключения до любого устройства (без агента).
+
+  speedtest trace <host> [--max 30] [--rounds N] [--json]
+        Трассировка пути до цели + непрерывный пинг каждого узла: потери и
+        задержка по хопам (mtr-style). Работает без прав администратора.
 
   speedtest httpdl <url|host[:port]> [--duration 10s] [--json]
         Download-тест по HTTP до устройства без агента (качает с его
@@ -48,6 +56,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Без --cidr подсеть определяется автоматически.
         --all сканирует все адреса (без проверки на живость).
 
+  speedtest history [--export csv|json]
+        Показать историю замеров (сохраняется автоматически) или выгрузить
+        её в CSV/JSON.
+
 Большинство команд принимают --json для машинного вывода.
 
 Общее:
@@ -55,9 +67,9 @@ const usage = `speedtest - сетевой инструмент (CLI)
 `
 
 func main() {
-	// No arguments -> launch the interactive menu.
+	// No arguments -> launch the full-screen TUI dashboard.
 	if len(os.Args) < 2 {
-		if err := menu.Run(); err != nil {
+		if err := tui.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "ошибка:", err)
 			os.Exit(1)
 		}
@@ -75,12 +87,18 @@ func main() {
 		err = lan.Run(args)
 	case "ping":
 		err = ping.RunPing(args)
+	case "trace":
+		err = trace.RunTrace(args)
 	case "httpdl":
 		err = webspeed.RunHTTPDL(args)
 	case "scan":
 		err = portscan.RunScan(args)
 	case "discover":
 		err = portscan.RunDiscover(args)
+	case "history":
+		err = history.RunHistory(args)
+	case "menu":
+		err = menu.Run()
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

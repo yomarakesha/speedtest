@@ -12,18 +12,156 @@
 package lan
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"speedtest/internal/util"
 )
 
 const defaultAddr = ":5201"
+const defaultPort = "5201"
+
+// Phase identifies a stage of the client run for live Progress updates.
+type Phase int
+
+const (
+	PhaseLatency Phase = iota
+	PhaseDownload
+	PhaseUpload
+	PhaseDone
+)
+
+// Progress is a live update from a streaming client run (for the TUI).
+type Progress struct {
+	Phase     Phase
+	Mbps      float64
+	LatencyMs float64
+}
+
+// ClientOptions configures a streaming LAN client run.
+type ClientOptions struct {
+	Host  string // host or host:port (defaultPort fills a missing port)
+	Bytes int64  // payload per direction
+}
+
+// ClientResult is the outcome of a streaming client run.
+type ClientResult struct {
+	Target       string  `json:"target"`
+	LatencyMs    float64 `json:"latency_ms"`
+	DownloadMbps float64 `json:"download_mbps"`
+	UploadMbps   float64 `json:"upload_mbps"`
+}
+
+// RunClient performs latency + download + upload against a LAN server, calling
+// cb (may be nil) with live Progress. Shares the wire protocol and helpers with
+// the headless runClient; the TUI dashboard uses this variant.
+func RunClient(ctx context.Context, opt ClientOptions, cb func(Progress)) (ClientResult, error) {
+	host := opt.Host
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		host = net.JoinHostPort(host, defaultPort)
+	}
+	res := ClientResult{Target: host}
+
+	ping, err := measureLatency(host, 5)
+	if err != nil {
+		return res, fmt.Errorf("подключение: %w", err)
+	}
+	res.LatencyMs = ping
+	if cb != nil {
+		cb(Progress{Phase: PhaseLatency, LatencyMs: ping})
+	}
+
+	runPhase := func(cmd byte, phase Phase) (time.Duration, error) {
+		var cnt atomic.Int64
+		done := make(chan struct{})
+		go func() {
+			t := time.NewTicker(100 * time.Millisecond)
+			defer t.Stop()
+			last, lastT := int64(0), time.Now()
+			for {
+				select {
+				case <-done:
+					return
+				case now := <-t.C:
+					cur := cnt.Load()
+					dt := now.Sub(lastT).Seconds()
+					if dt > 0 && cb != nil {
+						cb(Progress{Phase: phase, Mbps: float64(cur-last) * 8 / dt / 1e6})
+					}
+					last, lastT = cur, now
+				}
+			}
+		}()
+		dur, err := transferCtx(ctx, host, cmd, opt.Bytes, &cnt)
+		close(done)
+		return dur, err
+	}
+
+	down, err := runPhase('D', PhaseDownload)
+	if err != nil {
+		return res, notASpeedtestServer(host, err)
+	}
+	res.DownloadMbps = util.Mbps(opt.Bytes, down)
+
+	up, err := runPhase('U', PhaseUpload)
+	if err != nil {
+		return res, notASpeedtestServer(host, err)
+	}
+	res.UploadMbps = util.Mbps(opt.Bytes, up)
+
+	if cb != nil {
+		cb(Progress{Phase: PhaseDone})
+	}
+	return res, nil
+}
+
+// transferCtx is transfer with a context and a live byte counter.
+func transferCtx(ctx context.Context, host string, cmd byte, size int64, cnt *atomic.Int64) (time.Duration, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", host)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	if err := writeHeader(conn, cmd, uint64(size)); err != nil {
+		return 0, err
+	}
+	start := time.Now()
+	switch cmd {
+	case 'D':
+		if _, err := io.CopyN(countSink{cnt}, conn, size); err != nil {
+			return 0, err
+		}
+	case 'U':
+		if _, err := io.CopyN(conn, countSource{zeroReader{}, cnt}, size); err != nil {
+			return 0, err
+		}
+	}
+	return time.Since(start), nil
+}
+
+// countSink discards bytes while counting them (download drain).
+type countSink struct{ n *atomic.Int64 }
+
+func (c countSink) Write(p []byte) (int, error) { c.n.Add(int64(len(p))); return len(p), nil }
+
+// countSource wraps a reader and counts bytes read (upload source).
+type countSource struct {
+	r io.Reader
+	n *atomic.Int64
+}
+
+func (c countSource) Read(p []byte) (int, error) {
+	k, err := c.r.Read(p)
+	c.n.Add(int64(k))
+	return k, err
+}
 
 // Run dispatches `lan server` / `lan client`.
 func Run(args []string) error {
