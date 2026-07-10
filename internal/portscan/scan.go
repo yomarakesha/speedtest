@@ -66,6 +66,7 @@ func scanHost(host string, ports []int, timeout time.Duration, workers int) []in
 type PortInfo struct {
 	Port    int    `json:"port"`
 	Service string `json:"service,omitempty"`
+	Banner  string `json:"banner,omitempty"`
 }
 
 // ScanResult is the outcome of scanning a single host.
@@ -81,6 +82,7 @@ func RunScan(args []string) error {
 	portSpec := fs.String("ports", "1-1024", "ports to scan (e.g. 22,80,443 or 1-65535)")
 	timeout := fs.Duration("timeout", 500*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 500, "concurrent connections")
+	banner := fs.Bool("banner", false, "grab service banners from open ports")
 	asJSON := fs.Bool("json", false, "output result as JSON")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
@@ -108,6 +110,9 @@ func RunScan(args []string) error {
 		Hostname: reverseDNS(target, time.Second),
 		Open:     toPortInfos(open),
 	}
+	if *banner {
+		addBanners(target, res.Open, *timeout)
+	}
 
 	if *asJSON {
 		return printJSON(res)
@@ -121,10 +126,12 @@ func RunScan(args []string) error {
 		fmt.Printf("Открытых портов не найдено на %s%s (%.1f с).\n", target, name, elapsed.Seconds())
 		return nil
 	}
-	fmt.Printf("\nХост: %s%s\n\nПОРТ     СТАТУС   СЕРВИС\n", target, name)
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintf(tw, "\nХост: %s%s\n\nПОРТ\tСТАТУС\tСЕРВИС\tБАННЕР\n", target, name)
 	for _, p := range res.Open {
-		fmt.Printf("%-8d открыт   %s\n", p.Port, p.Service)
+		fmt.Fprintf(tw, "%d\tоткрыт\t%s\t%s\n", p.Port, dash(p.Service), dash(p.Banner))
 	}
+	tw.Flush()
 	fmt.Printf("\nОткрытых портов: %d за %.1f с.\n", len(open), elapsed.Seconds())
 	return nil
 }

@@ -48,7 +48,9 @@ const usage = `speedtest - сетевой инструмент (CLI)
         HTTP-сервера). Точен только при крупном ответе; upload недоступен.
 
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
-        Скан TCP-портов одного хоста и список открытых.
+                      [--banner]
+        Скан TCP-портов одного хоста и список открытых. С --banner
+        снимает баннер сервиса с каждого открытого порта (версия ПО).
 
   speedtest discover [--cidr 192.168.1.0/24] [--ports 22,80,443,...]
                      [--timeout 400ms] [--workers 1000] [--all] [--json]
