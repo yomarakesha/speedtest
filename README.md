@@ -15,8 +15,9 @@ also available as a scriptable subcommand. The interface is in Russian.
 | **Пинг** / `ping` | TCP-connect latency to **any** device (no agent), gping-style live graph. |
 | **Трейс** / `trace` | Traceroute + continuous per-hop ping (mtr/trippy-style), live loss & RTT. |
 | **HTTP** / `httpdl` | Download speed from any device's own HTTP(S) server — no agent on target. |
-| **Скан** / `scan` | TCP port scan of a single host with a live progress bar. |
+| **Скан** / `scan` | TCP port scan of a single host with a live progress bar; optional `--banner` service detection. |
 | **Обзор** / `discover` | Sweep the local subnet: live hosts, open ports, hostname, MAC, vendor. |
+| **Аудит** / `audit` | Security audit of a host: TLS/certificate, HTTP security headers, exposed risky ports → A–F grade. |
 | **История** / `history` | Every run is saved automatically; trend sparkline + CSV/JSON export. |
 
 ## The TUI dashboard
@@ -25,7 +26,7 @@ also available as a scriptable subcommand. The interface is in Russian.
 speedtest            # launch the full-screen dashboard
 ```
 
-- **Tab / Shift+Tab** or **1-8** — switch tabs, **← →** / **h l** also work.
+- **Tab / Shift+Tab** or **1-9** — switch tabs, **← →** / **h l** also work.
 - **?** — help overlay. **q** / **Ctrl+C** — quit.
 - Each tab drives the same measurement engine as its headless command, so the
   numbers you see live are identical to what `--json` reports.
@@ -87,11 +88,35 @@ Download-only estimate; accurate only against a large response.
 ### Port scan / subnet discovery
 ```sh
 speedtest scan 192.168.1.1 --ports 1-65535 --workers 1000
+speedtest scan 192.168.1.1 --ports 22,80,443 --banner   # grab service banners
 speedtest discover                       # auto-detect local /24
 speedtest discover --cidr 10.0.0.0/24 --ports 22,80,443,3389 --json
 ```
 Discovery does a fast liveness pre-check, then deep-scans only live hosts and
 annotates each with reverse-DNS name, MAC and vendor (system ARP table + OUI).
+`scan --banner` reads the greeting each open port volunteers (SSH/FTP/SMTP) or
+the HTTP `Server` header, revealing the running software and version.
+
+### Security audit
+```sh
+speedtest audit example.com                 # TLS + HTTP headers + risky ports
+speedtest audit example.com --json
+speedtest audit example.com --export html > report.html
+speedtest tlsaudit example.com              # TLS/certificate checks only
+speedtest httpaudit https://example.com     # HTTP security headers only
+```
+Each check produces findings ranked by severity and an overall **A–F** grade:
+
+- **TLS** — deprecated protocol versions (TLS 1.0/1.1), expired/soon-expiring or
+  untrusted certificates, hostname mismatch, weak signature algorithms.
+- **HTTP headers** — missing HSTS, CSP, X-Frame-Options, X-Content-Type-Options,
+  Referrer-Policy; cookies without Secure/HttpOnly; version leakage in `Server`.
+- **Ports** — exposed sensitive services (Telnet, SMB, RDP, VNC, Redis, MongoDB,
+  databases, …); suppressed automatically when a host ACKs nearly every port
+  (CDN/load-balancer/tarpit) to avoid false positives.
+
+All checks are passive: they open normal connections and inspect what the server
+volunteers. Audit runs are saved to history like every other measurement.
 
 ### History & export
 ```sh
