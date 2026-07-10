@@ -62,6 +62,11 @@ const usage = `speedtest - сетевой инструмент (CLI)
         доверие сертификата, совпадение имени хоста, слабые подписи.
         Итог — оценка A–F и список находок по важности.
 
+  speedtest httpaudit <url> [--timeout 10s] [--json]
+        Аудит HTTP-заголовков безопасности: HSTS, CSP, X-Frame-Options,
+        X-Content-Type-Options, Referrer-Policy, флаги cookie и утечка
+        версии в Server. Итог — оценка A–F.
+
   speedtest history [--export csv|json]
         Показать историю замеров (сохраняется автоматически) или выгрузить
         её в CSV/JSON.
@@ -103,6 +108,8 @@ func main() {
 		err = portscan.RunDiscover(args)
 	case "tlsaudit":
 		err = audit.RunTLSAudit(args)
+	case "httpaudit":
+		err = audit.RunHTTPAudit(args)
 	case "history":
 		err = history.RunHistory(args)
 	case "menu":
