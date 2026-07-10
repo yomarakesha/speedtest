@@ -115,8 +115,24 @@ Each check produces findings ranked by severity and an overall **A–F** grade:
   databases, …); suppressed automatically when a host ACKs nearly every port
   (CDN/load-balancer/tarpit) to avoid false positives.
 
-All checks are passive: they open normal connections and inspect what the server
-volunteers. Audit runs are saved to history like every other measurement.
+By default all checks are passive: they open normal connections and inspect what
+the server volunteers. Audit runs are saved to history like every other
+measurement.
+
+Two opt-in flags add deeper probing:
+
+```sh
+speedtest audit ns.example.com --dns                     # open resolver + AXFR
+speedtest audit 192.168.1.10 --i-have-authorization      # active checks
+```
+
+- `--dns` tests whether the host is an **open recursive resolver** and whether
+  it permits an unauthenticated **zone transfer (AXFR)**.
+- `--i-have-authorization` enables **active** checks that interact with services:
+  default HTTP Basic credentials, unauthenticated Redis/Memcached/Elasticsearch,
+  anonymous FTP, and CVE matching against grabbed banners. These send commands
+  and try logins — **only run them against systems you are authorized to test.**
+  The CVE table is a small illustrative set; treat hits as leads to verify.
 
 ### History & export
 ```sh

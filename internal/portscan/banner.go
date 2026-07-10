@@ -81,8 +81,9 @@ func sanitizeBanner(s string) string {
 	return s
 }
 
-// addBanners fills the Banner field of each open port on host, in parallel.
-func addBanners(host string, ports []PortInfo, timeout time.Duration) {
+// AddBanners fills the Banner field of each port on host, in parallel. Ports
+// that don't respond keep an empty banner.
+func AddBanners(host string, ports []PortInfo, timeout time.Duration) {
 	done := make(chan struct{}, len(ports))
 	for i := range ports {
 		go func(i int) {

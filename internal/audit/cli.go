@@ -21,6 +21,8 @@ func RunAudit(args []string) error {
 	asJSON := fs.Bool("json", false, "вывод в формате JSON")
 	export := fs.String("export", "", "формат отчёта: html")
 	withDNS := fs.Bool("dns", false, "проверить DNS (открытый резолвер, AXFR)")
+	active := fs.Bool("i-have-authorization", false,
+		"ВКЛЮЧИТЬ активные проверки (дефолт-креды, незащищённые сервисы, CVE) — только с разрешения владельца")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
 		return err
@@ -51,6 +53,13 @@ func RunAudit(args []string) error {
 	findings = append(findings, AuditPorts(host, *portTimeout)...)
 	if *withDNS {
 		findings = append(findings, AuditDNS(host, *timeout)...)
+	}
+	if *active {
+		if !quiet {
+			fmt.Println("  активные проверки (с вашей авторизацией): креды/сервисы/CVE ...")
+		}
+		findings = append(findings, AuditActive(host, *timeout)...)
+		findings = append(findings, AuditBannerCVEs(host, *timeout)...)
 	}
 
 	report := NewReport(target, findings)

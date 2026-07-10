@@ -111,7 +111,7 @@ func RunScan(args []string) error {
 		Open:     toPortInfos(open),
 	}
 	if *banner {
-		addBanners(target, res.Open, *timeout)
+		AddBanners(target, res.Open, *timeout)
 	}
 
 	if *asJSON {
