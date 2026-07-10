@@ -20,6 +20,7 @@ func RunAudit(args []string) error {
 	portTimeout := fs.Duration("port-timeout", time.Second, "таймаут скана портов")
 	asJSON := fs.Bool("json", false, "вывод в формате JSON")
 	export := fs.String("export", "", "формат отчёта: html")
+	withDNS := fs.Bool("dns", false, "проверить DNS (открытый резолвер, AXFR)")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
 		return err
@@ -48,6 +49,9 @@ func RunAudit(args []string) error {
 		fmt.Printf("  (HTTP пропущен: %v)\n", err)
 	}
 	findings = append(findings, AuditPorts(host, *portTimeout)...)
+	if *withDNS {
+		findings = append(findings, AuditDNS(host, *timeout)...)
+	}
 
 	report := NewReport(target, findings)
 	Record(report)
