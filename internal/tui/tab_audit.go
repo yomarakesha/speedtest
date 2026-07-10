@@ -84,7 +84,9 @@ func (t *auditTab) start() tea.Cmd {
 			all = append(all, f)
 			ch <- auditFindingMsg{f}
 		}
-		ch <- auditDoneMsg{audit.NewReport(host, all).Grade}
+		report := audit.NewReport(host, all)
+		audit.Record(report)
+		ch <- auditDoneMsg{report.Grade}
 	}()
 	return listen(ch)
 }

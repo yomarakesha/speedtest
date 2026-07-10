@@ -59,9 +59,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Без --cidr подсеть определяется автоматически.
         --all сканирует все адреса (без проверки на живость).
 
-  speedtest audit <host> [--timeout 8s] [--json]
+  speedtest audit <host> [--timeout 8s] [--json] [--export html]
         Полный аудит хоста: TLS + HTTP-заголовки + открытые чувствительные
         порты (telnet/SMB/RDP/БД и др.). Один отчёт с оценкой A–F.
+        --export html выводит автономный HTML-отчёт. Прогоны пишутся в history.
 
   speedtest tlsaudit <host[:443]> [--port 443] [--timeout 8s] [--json]
         Аудит TLS: версии протокола (TLS 1.0/1.1 небезопасны), срок и

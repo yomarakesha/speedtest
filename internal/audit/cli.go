@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ func RunAudit(args []string) error {
 	timeout := fs.Duration("timeout", 8*time.Second, "таймаут TLS/HTTP")
 	portTimeout := fs.Duration("port-timeout", time.Second, "таймаут скана портов")
 	asJSON := fs.Bool("json", false, "вывод в формате JSON")
+	export := fs.String("export", "", "формат отчёта: html")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
 		return err
@@ -28,24 +30,36 @@ func RunAudit(args []string) error {
 	target := pos[0]
 	host := HostOnly(target)
 
-	if !*asJSON {
+	// Machine/report output must be clean: suppress progress chatter.
+	quiet := *asJSON || *export != ""
+	if !quiet {
 		fmt.Printf("Аудит %s: TLS, HTTP-заголовки, открытые порты ...\n", target)
 	}
 
 	var findings []Finding
 	if fs, err := AuditTLS(target, 443, *timeout); err == nil {
 		findings = append(findings, fs...)
-	} else if !*asJSON {
+	} else if !quiet {
 		fmt.Printf("  (TLS пропущен: %v)\n", err)
 	}
 	if fs, err := AuditHTTP(target, *timeout); err == nil {
 		findings = append(findings, fs...)
-	} else if !*asJSON {
+	} else if !quiet {
 		fmt.Printf("  (HTTP пропущен: %v)\n", err)
 	}
 	findings = append(findings, AuditPorts(host, *portTimeout)...)
 
 	report := NewReport(target, findings)
+	Record(report)
+
+	switch *export {
+	case "html":
+		return ExportHTML(os.Stdout, report)
+	case "":
+		// fall through to normal output
+	default:
+		return fmt.Errorf("неизвестный формат экспорта %q (html)", *export)
+	}
 	if *asJSON {
 		return PrintJSON(report)
 	}
