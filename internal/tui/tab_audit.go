@@ -80,6 +80,10 @@ func (t *auditTab) start() tea.Cmd {
 				ch <- auditFindingMsg{f}
 			}
 		}
+		for _, f := range audit.AuditPorts(audit.HostOnly(host), time.Second) {
+			all = append(all, f)
+			ch <- auditFindingMsg{f}
+		}
 		ch <- auditDoneMsg{audit.NewReport(host, all).Grade}
 	}()
 	return listen(ch)

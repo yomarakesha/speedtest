@@ -26,7 +26,7 @@ func RunAudit(args []string) error {
 		return fmt.Errorf("использование: speedtest audit <host> [--json]")
 	}
 	target := pos[0]
-	host := hostOnly(target)
+	host := HostOnly(target)
 
 	if !*asJSON {
 		fmt.Printf("Аудит %s: TLS, HTTP-заголовки, открытые порты ...\n", target)
@@ -53,9 +53,9 @@ func RunAudit(args []string) error {
 	return nil
 }
 
-// hostOnly strips a scheme and port from a target, leaving the bare host for
+// HostOnly strips a scheme and port from a target, leaving the bare host for
 // the port scan.
-func hostOnly(target string) string {
+func HostOnly(target string) string {
 	if i := strings.Index(target, "://"); i >= 0 {
 		target = target[i+3:]
 	}

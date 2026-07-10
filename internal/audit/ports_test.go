@@ -14,8 +14,8 @@ func TestHostOnly(t *testing.T) {
 		"example.com":              "example.com",
 	}
 	for in, want := range cases {
-		if got := hostOnly(in); got != want {
-			t.Errorf("hostOnly(%q) = %q, want %q", in, got, want)
+		if got := HostOnly(in); got != want {
+			t.Errorf("HostOnly(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
