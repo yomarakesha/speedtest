@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"speedtest/internal/audit"
 	"speedtest/internal/history"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
@@ -56,6 +57,11 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Без --cidr подсеть определяется автоматически.
         --all сканирует все адреса (без проверки на живость).
 
+  speedtest tlsaudit <host[:443]> [--port 443] [--timeout 8s] [--json]
+        Аудит TLS: версии протокола (TLS 1.0/1.1 небезопасны), срок и
+        доверие сертификата, совпадение имени хоста, слабые подписи.
+        Итог — оценка A–F и список находок по важности.
+
   speedtest history [--export csv|json]
         Показать историю замеров (сохраняется автоматически) или выгрузить
         её в CSV/JSON.
@@ -95,6 +101,8 @@ func main() {
 		err = portscan.RunScan(args)
 	case "discover":
 		err = portscan.RunDiscover(args)
+	case "tlsaudit":
+		err = audit.RunTLSAudit(args)
 	case "history":
 		err = history.RunHistory(args)
 	case "menu":
