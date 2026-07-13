@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
+	"speedtest/internal/config"
 	"speedtest/internal/portscan"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -35,18 +35,20 @@ type scanTab struct {
 	host    string
 }
 
-func newScanTab() tab {
+func newScanTab(seed string) tab {
 	s := newStyles()
 	ti := textinput.New()
 	ti.Placeholder = "192.168.1.1"
 	ti.CharLimit = 253
 	ti.Prompt = "Хост: "
+	ti.SetValue(seed)
 	ti.Focus()
 	return &scanTab{sty: s, input: ti}
 }
 
 func (t *scanTab) Title() string { return "Скан" }
 func (t *scanTab) Init() tea.Cmd { return textinput.Blink }
+func (t *scanTab) Busy() bool    { return t.running }
 
 func (t *scanTab) ShortHelp() []string {
 	return []string{"[Enter] сканировать порты 1-1024"}
@@ -60,10 +62,11 @@ func (t *scanTab) start() tea.Cmd {
 	if host == "" {
 		return nil
 	}
-	ports, err := portscan.ParsePorts("1-1024")
+	ports, err := portscan.ParsePorts(scanPortSpec)
 	if err != nil {
 		return nil
 	}
+	config.Remember("scan", host)
 	t.host = host
 	t.running, t.done = true, false
 	t.scanned, t.total = 0, len(ports)
@@ -74,7 +77,7 @@ func (t *scanTab) start() tea.Cmd {
 	t.ch = ch
 	go func() {
 		res := portscan.ScanLive(context.Background(),
-			portscan.ScanOptions{Host: host, Ports: ports, Timeout: 500 * time.Millisecond, Workers: 500},
+			portscan.ScanOptions{Host: host, Ports: ports, Timeout: scanTimeout, Workers: scanWorkers},
 			func(done, total int) { ch <- scanProgressMsg{done, total} },
 			func(p portscan.PortInfo) { ch <- scanOpenMsg{p} })
 		ch <- scanDoneMsg{res}
@@ -123,10 +126,7 @@ func (t *scanTab) View() string {
 		if t.total > 0 {
 			frac = float64(t.scanned) / float64(t.total)
 		}
-		bw := t.w - 30
-		if bw < 10 {
-			bw = 10
-		}
+		bw := max(t.w-30, 10)
 		state := t.sty.good.Render("● скан")
 		if t.done {
 			state = t.sty.muted.Render("■ готово")
@@ -134,6 +134,8 @@ func (t *scanTab) View() string {
 		fmt.Fprintf(&b, "%s  %s %d/%d\n", state,
 			bar(frac, bw, t.sty.accent, t.sty.muted), t.scanned, t.total)
 		b.WriteString(t.openList())
+	} else if hint := hostHint(t.sty, t.input.Value()); hint != "" {
+		b.WriteString(hint)
 	} else {
 		b.WriteString(t.sty.muted.Render("Сканирование TCP-портов 1-1024 одного хоста."))
 	}
