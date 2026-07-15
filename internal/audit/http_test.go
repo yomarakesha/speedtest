@@ -9,9 +9,10 @@ import (
 
 func TestNormalizeURL(t *testing.T) {
 	cases := map[string]string{
-		"example.com":         "https://example.com",
-		"http://example.com":  "https://example.com",
-		"https://example.com": "https://example.com",
+		"example.com":          "https://example.com", // bare host defaults to https
+		"http://example.com":   "http://example.com",  // explicit http honored
+		"http://10.0.0.1:8080": "http://10.0.0.1:8080",
+		"https://example.com":  "https://example.com",
 	}
 	for in, want := range cases {
 		if got := normalizeURL(in); got != want {

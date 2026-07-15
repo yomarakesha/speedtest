@@ -31,7 +31,8 @@ var securityHeaders = []headerCheck{
 }
 
 // AuditHTTP fetches url and evaluates its security-relevant response headers.
-// A bare host or http:// URL is upgraded to https:// so HSTS can be assessed.
+// A bare host is assumed https:// so HSTS can be assessed; an explicit http://
+// is honored so plain-HTTP services (e.g. on alternate ports) can be audited.
 func AuditHTTP(url string, timeout time.Duration) ([]Finding, error) {
 	client := &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -125,15 +126,12 @@ func cookieFindings(resp *http.Response, https bool) []Finding {
 	return out
 }
 
-// normalizeURL ensures the target has an https scheme so header checks (and
-// HSTS in particular) are meaningful.
+// normalizeURL keeps an explicit scheme as given (so an http:// service can be
+// audited directly) and defaults a bare host to https:// so header checks — HSTS
+// in particular — are meaningful.
 func normalizeURL(url string) string {
-	switch {
-	case strings.HasPrefix(url, "https://"):
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
 		return url
-	case strings.HasPrefix(url, "http://"):
-		return "https://" + strings.TrimPrefix(url, "http://")
-	default:
-		return "https://" + url
 	}
+	return "https://" + url
 }
