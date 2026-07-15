@@ -2,6 +2,7 @@ package audit
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -66,7 +67,25 @@ func auditHTTP(url string, client *http.Client, timeout time.Duration) ([]Findin
 	}
 	findings = append(findings, serverBannerFinding(resp)...)
 	findings = append(findings, cookieFindings(resp, strings.HasPrefix(url, "https://"))...)
+	findings = append(findings, httpRuleFindings(resp)...)
 	return findings, nil
+}
+
+// httpRuleFindings runs the declarative rule engine over the response: its
+// headers, a bounded slice of the body, and the Server header as a banner (so a
+// version-based rule can fire on it too).
+func httpRuleFindings(resp *http.Response) []Finding {
+	headers := make(map[string]string, len(resp.Header))
+	for k := range resp.Header {
+		headers[k] = resp.Header.Get(k)
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	return DefaultRuleEngine().Eval(MatchInput{
+		Banner:  resp.Header.Get("Server"),
+		Headers: headers,
+		Body:    string(body),
+		Status:  resp.StatusCode,
+	})
 }
 
 // serverBannerFinding notes a Server header that leaks a version, which aids
