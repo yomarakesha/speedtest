@@ -46,6 +46,7 @@ func New() model {
 			newTraceTab(cfg.TraceHost),
 			newScanTab(cfg.ScanHost),
 			newDiscoverTab(),
+			newWiFiTab(),
 			newHTTPDLTab(cfg.HTTPURL),
 			newAuditTab(cfg.AuditHost),
 			newHistoryTab(),

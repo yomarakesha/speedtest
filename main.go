@@ -19,6 +19,7 @@ import (
 	"speedtest/internal/trace"
 	"speedtest/internal/tui"
 	"speedtest/internal/webspeed"
+	"speedtest/internal/wifi"
 )
 
 const usage = `speedtest - сетевой инструмент (CLI)
@@ -58,6 +59,12 @@ const usage = `speedtest - сетевой инструмент (CLI)
         плюс имя (обратный DNS), MAC и производитель (из таблицы ARP).
         Без --cidr подсеть определяется автоматически.
         --all сканирует все адреса (без проверки на живость).
+        --all-subnets обходит все подсети машины (все интерфейсы + маршруты).
+
+  speedtest wifi [--json]
+        Обзор Wi-Fi: текущее подключение (SSID, сигнал, канал), сети поблизости
+        и совет по наименее загруженному каналу 2.4 ГГц. Трафик отдельных
+        клиентов не показывается (нужен режим монитора адаптера).
 
   speedtest audit <host> [--timeout 8s] [--json] [--export html] [--dns]
         Полный аудит хоста: TLS + HTTP-заголовки + открытые чувствительные
@@ -117,6 +124,8 @@ func main() {
 		err = portscan.RunScan(args)
 	case "discover":
 		err = portscan.RunDiscover(args)
+	case "wifi":
+		err = wifi.RunWiFi(args)
 	case "audit":
 		err = audit.RunAudit(args)
 	case "tlsaudit":
