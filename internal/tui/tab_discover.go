@@ -31,9 +31,10 @@ type discoverTab struct {
 	ch   chan tea.Msg
 	tbl  table.Model
 
-	running bool
-	done    bool
-	phase   portscan.DiscoverPhase
+	running    bool
+	done       bool
+	allSubnets bool
+	phase      portscan.DiscoverPhase
 	pdone   int
 	ptotal  int
 	hosts   []portscan.HostResult
@@ -49,7 +50,11 @@ func (t *discoverTab) Init() tea.Cmd { return nil }
 func (t *discoverTab) Busy() bool    { return t.running }
 
 func (t *discoverTab) ShortHelp() []string {
-	return []string{"[Enter] обзор локальной сети", "[↑/↓] прокрутка", "[r] повторить"}
+	scope := "[a] все подсети: выкл"
+	if t.allSubnets {
+		scope = "[a] все подсети: вкл"
+	}
+	return []string{"[Enter] обзор локальной сети", scope, "[↑/↓] прокрутка", "[r] повторить"}
 }
 
 func (t *discoverTab) Capturing() bool { return false }
@@ -85,7 +90,7 @@ func (t *discoverTab) start() tea.Cmd {
 	t.ch = ch
 	go func() {
 		_, err := portscan.DiscoverLive(context.Background(),
-			portscan.DiscoverOptions{Timeout: discoverTimeout, Workers: discoverWorkers},
+			portscan.DiscoverOptions{Timeout: discoverTimeout, Workers: discoverWorkers, AllSubnets: t.allSubnets},
 			func(p portscan.DiscoverPhase, done, total int) { ch <- discPhaseMsg{p, done, total} },
 			func(h portscan.HostResult) { ch <- discHostMsg{h} })
 		ch <- discDoneMsg{err}
@@ -105,6 +110,11 @@ func (t *discoverTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		case "r":
 			if t.done {
 				return t, t.start()
+			}
+			return t, nil
+		case "a":
+			if !t.running {
+				t.allSubnets = !t.allSubnets
 			}
 			return t, nil
 		}
@@ -169,7 +179,13 @@ func (t *discoverTab) View() string {
 			b.WriteString(t.tbl.View())
 		}
 	default:
-		b.WriteString(t.sty.muted.Render("Обзор всей локальной подсети: живые устройства, их открытые порты,\nMAC-адреса и производители. Нажмите Enter."))
+		scope := "текущая подсеть"
+		if t.allSubnets {
+			scope = "ВСЕ подсети машины"
+		}
+		fmt.Fprintf(&b, "%s\n\n%s",
+			t.sty.muted.Render("Обзор локальной сети: живые устройства, их открытые порты,\nMAC-адреса и производители. Нажмите Enter."),
+			t.sty.muted.Render("Область: "+scope+"  ([a] переключить)"))
 	}
 	return lipgloss.Place(t.w, t.h, lipgloss.Left, lipgloss.Top,
 		t.sty.frame("Обзор сети", t.w, t.h, b.String()))
