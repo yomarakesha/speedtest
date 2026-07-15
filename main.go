@@ -11,6 +11,7 @@ import (
 
 	"speedtest/internal/audit"
 	"speedtest/internal/bwmon"
+	"speedtest/internal/capture"
 	"speedtest/internal/history"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
@@ -70,6 +71,12 @@ const usage = `speedtest - сетевой инструмент (CLI)
   speedtest bwmon [--interval 2s] [--count N] [--json]
         Живая пропускная способность интерфейсов ЭТОЙ машины (приём/передача
         по каждому адаптеру). Показывает только собственный трафик хоста.
+
+  speedtest sniff [--iface NAME] [--top 15] [--resolve] [--list] [--json]
+        Пассивный топ собеседников по объёму трафика (кто больше «общается»).
+        Требует сборки с -tags pcap и установленного Npcap (Windows) / libpcap.
+        В коммутируемой сети виден в основном свой трафик + широковещание;
+        для полной картины нужен SPAN-порт или режим монитора Wi-Fi.
 
   speedtest audit <host> [--timeout 8s] [--json] [--export html] [--dns]
         Полный аудит хоста: TLS + HTTP-заголовки + открытые чувствительные
@@ -133,6 +140,8 @@ func main() {
 		err = wifi.RunWiFi(args)
 	case "bwmon":
 		err = bwmon.RunBWMon(args)
+	case "sniff":
+		err = capture.RunSniff(args)
 	case "audit":
 		err = audit.RunAudit(args)
 	case "tlsaudit":
