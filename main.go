@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"speedtest/internal/audit"
+	"speedtest/internal/bwmon"
 	"speedtest/internal/history"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
@@ -65,6 +66,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Обзор Wi-Fi: текущее подключение (SSID, сигнал, канал), сети поблизости
         и совет по наименее загруженному каналу 2.4 ГГц. Трафик отдельных
         клиентов не показывается (нужен режим монитора адаптера).
+
+  speedtest bwmon [--interval 2s] [--count N] [--json]
+        Живая пропускная способность интерфейсов ЭТОЙ машины (приём/передача
+        по каждому адаптеру). Показывает только собственный трафик хоста.
 
   speedtest audit <host> [--timeout 8s] [--json] [--export html] [--dns]
         Полный аудит хоста: TLS + HTTP-заголовки + открытые чувствительные
@@ -126,6 +131,8 @@ func main() {
 		err = portscan.RunDiscover(args)
 	case "wifi":
 		err = wifi.RunWiFi(args)
+	case "bwmon":
+		err = bwmon.RunBWMon(args)
 	case "audit":
 		err = audit.RunAudit(args)
 	case "tlsaudit":

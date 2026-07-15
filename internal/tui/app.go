@@ -47,6 +47,7 @@ func New() model {
 			newScanTab(cfg.ScanHost),
 			newDiscoverTab(),
 			newWiFiTab(),
+			newBWTab(),
 			newHTTPDLTab(cfg.HTTPURL),
 			newAuditTab(cfg.AuditHost),
 			newHistoryTab(),
