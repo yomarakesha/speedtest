@@ -214,7 +214,13 @@ func Serve(ctx context.Context, addr string) (ServerInfo, error) {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
-				return // listener closed via ctx
+				if ctx.Err() != nil {
+					return // listener closed via ctx — clean shutdown
+				}
+				// Unexpected failure: surface it instead of dying silently so a
+				// broken listener isn't mistaken for a graceful stop.
+				fmt.Fprintf(os.Stderr, "lan: приём соединения не удался: %v\n", err)
+				return
 			}
 			go serve(conn)
 		}

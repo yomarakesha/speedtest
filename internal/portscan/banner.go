@@ -75,19 +75,29 @@ func sanitizeBanner(s string) string {
 		return r
 	}, s)
 	const max = 80
-	if len(s) > max {
-		s = s[:max] + "…"
+	// Cap by runes, not bytes: slicing a byte offset can split a multibyte UTF-8
+	// rune and produce an invalid string.
+	if r := []rune(s); len(r) > max {
+		s = string(r[:max]) + "…"
 	}
 	return s
 }
 
-// AddBanners fills the Banner field of each port on host, in parallel. Ports
-// that don't respond keep an empty banner.
+// bannerWorkers caps how many banner grabs run at once, so a large open-port
+// set can't spawn thousands of simultaneous connections (one goroutine + socket
+// per port), which starves file descriptors and trips connection rate limits.
+const bannerWorkers = 64
+
+// AddBanners fills the Banner field of each port on host, in parallel but
+// bounded by bannerWorkers. Ports that don't respond keep an empty banner.
 func AddBanners(host string, ports []PortInfo, timeout time.Duration) {
+	sem := make(chan struct{}, bannerWorkers)
 	done := make(chan struct{}, len(ports))
 	for i := range ports {
 		go func(i int) {
+			sem <- struct{}{}
 			ports[i].Banner = grabBanner(host, ports[i].Port, timeout)
+			<-sem
 			done <- struct{}{}
 		}(i)
 	}

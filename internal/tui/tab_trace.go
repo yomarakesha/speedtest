@@ -76,7 +76,7 @@ func (t *traceTab) start() tea.Cmd {
 			case <-ctx.Done():
 			}
 		})
-		ch <- engineDoneMsg{err}
+		ch <- engineDoneMsg{ch: ch, err: err}
 	}()
 	return listen(ch)
 }
@@ -109,6 +109,9 @@ func (t *traceTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		return t, listen(t.ch)
 
 	case engineDoneMsg:
+		if msg.ch != t.ch { // completion from another tab's engine — ignore
+			return t, nil
+		}
 		t.running = false
 		if msg.err != nil {
 			t.err = msg.err

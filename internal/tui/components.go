@@ -96,8 +96,14 @@ func listen(ch chan tea.Msg) tea.Cmd {
 	return func() tea.Msg { return <-ch }
 }
 
-// engineDoneMsg signals an engine goroutine finished (err nil on success).
-type engineDoneMsg struct{ err error }
+// engineDoneMsg signals an engine goroutine finished (err nil on success). ch
+// identifies the channel it was sent on so a tab can ignore completions from
+// other tabs: every non-key message is broadcast to all tabs, and this type is
+// shared, so an unguarded handler would act on a sibling's completion.
+type engineDoneMsg struct {
+	ch  chan tea.Msg
+	err error
+}
 
 // fmtMbps renders a throughput value with a sensible unit.
 func fmtMbps(v float64) string {

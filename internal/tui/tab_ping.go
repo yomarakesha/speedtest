@@ -122,7 +122,7 @@ func (t *pingTab) start() tea.Cmd {
 		}) {
 			ch <- pingSampleMsg{s}
 		}
-		ch <- engineDoneMsg{}
+		ch <- engineDoneMsg{ch: ch}
 	}()
 	return listen(ch)
 }

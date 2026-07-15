@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -21,13 +22,18 @@ var defaultCreds = [][2]string{
 	{"admin", "admin"},
 	{"admin", "password"},
 	{"admin", ""},
+	{"admin", "1234"},
+	{"admin", "12345"},
+	{"administrator", "administrator"},
 	{"root", "root"},
+	{"root", "toor"},
 	{"user", "user"},
+	{"tomcat", "tomcat"},
+	{"guest", "guest"},
 }
 
 // AuditActive runs the intrusive checks against host. It is only invoked after
-// the caller confirms authorization. progress, when non-nil, receives a short
-// status line per check for interactive callers.
+// the caller confirms authorization.
 func AuditActive(host string, timeout time.Duration) []Finding {
 	var out []Finding
 	out = append(out, unauthServiceFindings(host, timeout)...)
@@ -149,7 +155,11 @@ func tryBasicAuth(client *http.Client, url, user, pass string) bool {
 		return false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode != http.StatusUnauthorized && resp.StatusCode < 500
+	// Only a 2xx means the credentials were accepted and access granted. 401 is
+	// an outright rejection; 403/3xx and other codes are ambiguous (forbidden,
+	// redirected to a login page, ...) and must not be reported as a default-cred
+	// success — doing so raised false Critical findings.
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 // probe opens a TCP connection, writes send, and returns the first line read.
@@ -176,9 +186,12 @@ func httpGet(host string, port int, path string, timeout time.Duration) string {
 		return ""
 	}
 	defer resp.Body.Close()
-	buf := make([]byte, 2048)
-	n, _ := resp.Body.Read(buf)
-	return string(buf[:n])
+	// A single Read can return fewer bytes than one packet holds, so a signature
+	// (e.g. Elasticsearch's "cluster_name") near the start may be split across
+	// reads and missed. Read the whole body, capped so a huge response can't
+	// exhaust memory.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	return string(body)
 }
 
 // blankable renders an empty password visibly for reporting.
