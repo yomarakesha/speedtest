@@ -45,6 +45,39 @@ func (s Severity) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.String())
 }
 
+// UnmarshalJSON accepts either the string label written by MarshalJSON or a raw
+// integer, so a stored report/snapshot round-trips back to a Severity.
+func (s *Severity) UnmarshalJSON(b []byte) error {
+	var str string
+	if err := json.Unmarshal(b, &str); err == nil {
+		*s = severityFromLabel(str)
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*s = Severity(n)
+	return nil
+}
+
+// severityFromLabel is the inverse of String(): it maps a Russian severity label
+// back to its Severity. An unknown label degrades to Info.
+func severityFromLabel(label string) Severity {
+	switch label {
+	case "критично":
+		return Critical
+	case "высокая":
+		return High
+	case "средняя":
+		return Medium
+	case "низкая":
+		return Low
+	default:
+		return Info
+	}
+}
+
 // Finding is a single issue (or informational note) discovered by a check.
 type Finding struct {
 	Check    string   `json:"check"`    // stable id, e.g. "tls.weak_protocol"
@@ -52,6 +85,7 @@ type Finding struct {
 	Title    string   `json:"title"`    // short human summary
 	Detail   string   `json:"detail"`   // what/why
 	Evidence string   `json:"evidence,omitempty"`
+	Tags     []string `json:"tags,omitempty"` // compliance mapping (OWASP/CIS), set by NewReport
 }
 
 // Report is the full outcome of auditing one target.
@@ -61,11 +95,17 @@ type Report struct {
 	Grade    string    `json:"grade"`
 }
 
-// NewReport sorts findings by descending severity and computes the grade.
+// NewReport sorts findings by descending severity, tags each with its
+// compliance mapping, and computes the grade.
 func NewReport(target string, findings []Finding) Report {
 	sort.SliceStable(findings, func(i, j int) bool {
 		return findings[i].Severity > findings[j].Severity
 	})
+	for i := range findings {
+		if findings[i].Tags == nil {
+			findings[i].Tags = complianceTags(findings[i].Check)
+		}
+	}
 	return Report{Target: target, Findings: findings, Grade: grade(findings)}
 }
 

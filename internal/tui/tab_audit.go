@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"speedtest/internal/audit"
 	"speedtest/internal/config"
@@ -67,23 +66,11 @@ func (t *auditTab) start() tea.Cmd {
 	ch := make(chan tea.Msg, 64)
 	t.ch = ch
 	go func() {
-		var all []audit.Finding
-		if fs, err := audit.AuditTLS(host, 443, 8*time.Second); err == nil {
-			for _, f := range fs {
-				all = append(all, f)
-				ch <- auditFindingMsg{f}
-			}
-		}
-		if fs, err := audit.AuditHTTP(host, 10*time.Second); err == nil {
-			for _, f := range fs {
-				all = append(all, f)
-				ch <- auditFindingMsg{f}
-			}
-		}
-		for _, f := range audit.AuditPorts(audit.HostOnly(host), time.Second) {
-			all = append(all, f)
-			ch <- auditFindingMsg{f}
-		}
+		// Same orchestration and timeouts the CLI uses, so a host grades
+		// identically in both. Passive checks only — the intrusive/DNS checks
+		// need an authorization flag the TUI can't collect.
+		all := audit.RunChecks(host, audit.DefaultAuditOptions(),
+			func(f audit.Finding) { ch <- auditFindingMsg{f} }, nil)
 		report := audit.NewReport(host, all)
 		audit.Record(report)
 		ch <- auditDoneMsg{report.Grade}

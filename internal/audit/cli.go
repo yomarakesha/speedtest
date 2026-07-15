@@ -11,6 +11,61 @@ import (
 	"speedtest/internal/util"
 )
 
+// AuditOptions selects which checks RunChecks performs and with what timeouts.
+// The zero value is not valid; start from DefaultAuditOptions.
+type AuditOptions struct {
+	Timeout     time.Duration // TLS/HTTP/DNS/active per-check timeout
+	PortTimeout time.Duration // port-scan connect timeout
+	WithDNS     bool          // open-resolver / AXFR checks
+	Active      bool          // intrusive checks (default creds, unauth services, CVE) — needs authorization
+}
+
+// DefaultAuditOptions returns the standard timeouts shared by the CLI and TUI so
+// the same host grades identically in both. Only the passive checks are on.
+func DefaultAuditOptions() AuditOptions {
+	return AuditOptions{Timeout: 8 * time.Second, PortTimeout: time.Second}
+}
+
+// RunChecks runs the configured checks against target, calling emit (may be nil)
+// for each finding as it is produced, and returns them all. TLS/HTTP failures
+// are non-fatal — that check is skipped and onSkip (may be nil) is told why.
+// This is the single orchestration point for both the CLI and the TUI.
+func RunChecks(target string, opt AuditOptions, emit func(Finding), onSkip func(string)) []Finding {
+	host := HostOnly(target)
+	var findings []Finding
+	add := func(fs []Finding) {
+		for _, f := range fs {
+			findings = append(findings, f)
+			if emit != nil {
+				emit(f)
+			}
+		}
+	}
+
+	if fs, err := AuditTLS(target, 443, opt.Timeout); err == nil {
+		add(fs)
+	} else if onSkip != nil {
+		onSkip(fmt.Sprintf("TLS пропущен: %v", err))
+	}
+	if fs, err := AuditHTTP(target, opt.Timeout); err == nil {
+		add(fs)
+	} else if onSkip != nil {
+		onSkip(fmt.Sprintf("HTTP пропущен: %v", err))
+	}
+	add(AuditPorts(host, opt.PortTimeout))
+	add(AuditSMB(host, opt.PortTimeout))
+	add(AuditWebPaths(target, opt.Timeout))
+	if opt.WithDNS {
+		add(AuditDNS(host, opt.Timeout))
+	}
+	if opt.Active {
+		add(AuditActive(host, opt.Timeout))
+		add(AuditSNMP(host, opt.Timeout))
+		add(AuditBannerCVEs(host, opt.Timeout))
+	}
+	return findings
+}
+
 // RunAudit is the CLI entry point for `speedtest audit <host>`: it runs every
 // check (TLS, HTTP headers, risky ports) against one host and prints a single
 // combined report.
@@ -19,8 +74,9 @@ func RunAudit(args []string) error {
 	timeout := fs.Duration("timeout", 8*time.Second, "таймаут TLS/HTTP")
 	portTimeout := fs.Duration("port-timeout", time.Second, "таймаут скана портов")
 	asJSON := fs.Bool("json", false, "вывод в формате JSON")
-	export := fs.String("export", "", "формат отчёта: html")
+	export := fs.String("export", "", "формат отчёта: html | sarif")
 	withDNS := fs.Bool("dns", false, "проверить DNS (открытый резолвер, AXFR)")
+	compare := fs.Bool("compare", false, "сравнить с прошлым прогоном (что открылось/закрылось)")
 	active := fs.Bool("i-have-authorization", false,
 		"ВКЛЮЧИТЬ активные проверки (дефолт-креды, незащищённые сервисы, CVE) — только с разрешения владельца")
 	pos, err := util.ParseFlags(fs, args)
@@ -31,47 +87,53 @@ func RunAudit(args []string) error {
 		return fmt.Errorf("использование: speedtest audit <host> [--json]")
 	}
 	target := pos[0]
-	host := HostOnly(target)
 
 	// Machine/report output must be clean: suppress progress chatter.
 	quiet := *asJSON || *export != ""
 	if !quiet {
 		fmt.Printf("Аудит %s: TLS, HTTP-заголовки, открытые порты ...\n", target)
-	}
-
-	var findings []Finding
-	if fs, err := AuditTLS(target, 443, *timeout); err == nil {
-		findings = append(findings, fs...)
-	} else if !quiet {
-		fmt.Printf("  (TLS пропущен: %v)\n", err)
-	}
-	if fs, err := AuditHTTP(target, *timeout); err == nil {
-		findings = append(findings, fs...)
-	} else if !quiet {
-		fmt.Printf("  (HTTP пропущен: %v)\n", err)
-	}
-	findings = append(findings, AuditPorts(host, *portTimeout)...)
-	if *withDNS {
-		findings = append(findings, AuditDNS(host, *timeout)...)
-	}
-	if *active {
-		if !quiet {
+		if *active {
 			fmt.Println("  активные проверки (с вашей авторизацией): креды/сервисы/CVE ...")
 		}
-		findings = append(findings, AuditActive(host, *timeout)...)
-		findings = append(findings, AuditBannerCVEs(host, *timeout)...)
 	}
+
+	var onSkip func(string)
+	if !quiet {
+		onSkip = func(note string) { fmt.Printf("  (%s)\n", note) }
+	}
+	opt := AuditOptions{
+		Timeout:     *timeout,
+		PortTimeout: *portTimeout,
+		WithDNS:     *withDNS,
+		Active:      *active,
+	}
+	findings := RunChecks(target, opt, nil, onSkip)
 
 	report := NewReport(target, findings)
 	Record(report)
 
+	// Drift detection: diff against the previous snapshot before overwriting it.
+	if *compare && !quiet {
+		prev, ok := LoadSnapshot(target)
+		if !ok {
+			fmt.Println("\nСравнить не с чем: это первый аудит цели (снимок сохранён).")
+		} else {
+			PrintDiff(DiffReports(prev, report))
+		}
+	}
+	if err := SaveSnapshot(report); err != nil {
+		fmt.Fprintf(os.Stderr, "audit: снимок не сохранён: %v\n", err)
+	}
+
 	switch *export {
 	case "html":
 		return ExportHTML(os.Stdout, report)
+	case "sarif":
+		return ExportSARIF(os.Stdout, report)
 	case "":
 		// fall through to normal output
 	default:
-		return fmt.Errorf("неизвестный формат экспорта %q (html)", *export)
+		return fmt.Errorf("неизвестный формат экспорта %q (html|sarif)", *export)
 	}
 	if *asJSON {
 		return PrintJSON(report)

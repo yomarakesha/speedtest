@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -40,7 +41,39 @@ func AuditTLS(host string, defaultPort int, timeout time.Duration) ([]Finding, e
 	var findings []Finding
 	findings = append(findings, certFindings(state, hostname)...)
 	findings = append(findings, versionFindings(addr, hostname, timeout)...)
+	findings = append(findings, cipherFindings(addr, hostname, timeout)...)
 	return findings, nil
+}
+
+// cipherFindings probes whether the server accepts a handshake that offers only
+// cipher suites Go considers insecure (RC4, 3DES, CBC-SHA). A successful
+// handshake means the server negotiates a weak cipher when asked. Cipher
+// selection only applies to TLS 1.2 and below.
+func cipherFindings(addr, hostname string, timeout time.Duration) []Finding {
+	weakIDs := make([]uint16, 0, len(tls.InsecureCipherSuites()))
+	for _, c := range tls.InsecureCipherSuites() {
+		weakIDs = append(weakIDs, c.ID)
+	}
+	cfg := &tls.Config{
+		ServerName:         hostname,
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS10,
+		MaxVersion:         tls.VersionTLS12,
+		CipherSuites:       weakIDs,
+	}
+	d := &net.Dialer{Timeout: timeout}
+	conn, err := tls.DialWithDialer(d, "tcp", addr, cfg)
+	if err != nil {
+		return nil // server refused every weak cipher — good
+	}
+	name := tls.CipherSuiteName(conn.ConnectionState().CipherSuite)
+	conn.Close()
+	return []Finding{{
+		Check: "tls.weak_cipher", Severity: Medium,
+		Title:    "Сервер принимает слабый шифронабор",
+		Detail:   name + " считается небезопасным и должен быть отключён",
+		Evidence: name,
+	}}
 }
 
 // handshake performs a TLS handshake and returns the negotiated state. If
@@ -126,6 +159,16 @@ func certFindings(state tls.ConnectionState, hostname string) []Finding {
 			Check: "tls.weak_signature", Severity: Medium,
 			Title:  "Слабый алгоритм подписи сертификата",
 			Detail: leaf.SignatureAlgorithm.String(),
+		})
+	}
+
+	// Undersized RSA key (< 2048 bits is deprecated by the CA/Browser Forum).
+	if pub, ok := leaf.PublicKey.(*rsa.PublicKey); ok && pub.N.BitLen() < 2048 {
+		out = append(out, Finding{
+			Check: "tls.weak_key", Severity: Medium,
+			Title:    "Слабый ключ RSA",
+			Detail:   fmt.Sprintf("%d бит (нужно ≥ 2048)", pub.N.BitLen()),
+			Evidence: fmt.Sprintf("RSA-%d", pub.N.BitLen()),
 		})
 	}
 	return out
