@@ -33,6 +33,15 @@ type scanTab struct {
 	total   int
 	open    []portscan.PortInfo
 	host    string
+	portIdx int // index into scanPresets
+}
+
+// scanPresets are the port ranges the Scan tab can cycle through with [p].
+// 1-1024 covers well-known services fast; the full range catches high ports
+// (databases, RDP, alt-HTTP like 3306/3389/8080) at the cost of speed.
+var scanPresets = []struct{ label, spec string }{
+	{"1-1024 (быстро)", "1-1024"},
+	{"1-65535 (все)", "1-65535"},
 }
 
 func newScanTab(seed string) tab {
@@ -51,7 +60,7 @@ func (t *scanTab) Init() tea.Cmd { return textinput.Blink }
 func (t *scanTab) Busy() bool    { return t.running }
 
 func (t *scanTab) ShortHelp() []string {
-	return []string{"[Enter] сканировать порты 1-1024"}
+	return []string{"[Enter] сканировать", "[p] диапазон: " + scanPresets[t.portIdx].label}
 }
 
 func (t *scanTab) Capturing() bool  { return t.input.Focused() }
@@ -62,7 +71,7 @@ func (t *scanTab) start() tea.Cmd {
 	if host == "" {
 		return nil
 	}
-	ports, err := portscan.ParsePorts(scanPortSpec)
+	ports, err := portscan.ParsePorts(scanPresets[t.portIdx].spec)
 	if err != nil {
 		return nil
 	}
@@ -90,6 +99,10 @@ func (t *scanTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "enter" && !t.running {
 			return t, t.start()
+		}
+		if msg.String() == "p" && !t.running {
+			t.portIdx = (t.portIdx + 1) % len(scanPresets)
+			return t, nil
 		}
 
 	case scanProgressMsg:
@@ -137,7 +150,7 @@ func (t *scanTab) View() string {
 	} else if hint := hostHint(t.sty, t.input.Value()); hint != "" {
 		b.WriteString(hint)
 	} else {
-		b.WriteString(t.sty.muted.Render("Сканирование TCP-портов 1-1024 одного хоста."))
+		b.WriteString(t.sty.muted.Render("Сканирование TCP-портов " + scanPresets[t.portIdx].spec + " одного хоста."))
 	}
 
 	return lipgloss.Place(t.w, t.h, lipgloss.Left, lipgloss.Top,
