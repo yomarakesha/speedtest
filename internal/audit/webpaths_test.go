@@ -54,6 +54,26 @@ func TestAuditWebPathsCatchAllSuppressed(t *testing.T) {
 	}
 }
 
+func TestAuditWebPathsSPAShellSuppressed(t *testing.T) {
+	// A single-page app (MinIO/React console) returns its HTML shell with 200 for
+	// ANY path, including /.env. The shell contains '=' (the .env needle) in its
+	// attributes, so the needle alone would false-positive. The rawFile HTML guard
+	// must suppress it.
+	shell := `<!doctype html><html lang="en"><head><meta charset="utf-8"/>` +
+		`<title>MinIO Console</title></head><body><div id="root"></div></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(shell))
+	}))
+	defer srv.Close()
+
+	for _, f := range AuditWebPaths(srv.URL, 3*time.Second) {
+		if f.Evidence == "/.env" || f.Evidence == "/.git/HEAD" {
+			t.Errorf("SPA shell produced false positive: %s", f.Evidence)
+		}
+	}
+}
+
 func TestWebBaseURL(t *testing.T) {
 	cases := map[string]string{
 		"example.com":              "http://example.com",

@@ -13,30 +13,33 @@ import (
 
 // pathProbe describes one sensitive URL to look for. needle, when set, must
 // appear in the response body for the finding to fire — this filters out servers
-// that answer 200 to everything (soft-404s / catch-all SPAs).
+// that answer 200 to everything (soft-404s / catch-all SPAs). rawFile marks a
+// probe whose target is a plain (non-HTML) file: an HTML response then means a
+// catch-all SPA served its shell, not the file, and the finding is suppressed.
 type pathProbe struct {
-	path   string
-	sev    Severity
-	title  string
-	needle string
+	path    string
+	sev     Severity
+	title   string
+	needle  string
+	rawFile bool
 }
 
 // sensitivePaths are common exposures worth checking on a web server. Each is a
 // real, high-signal leak when reachable — source-control metadata, secrets
 // files, status/monitoring endpoints, backups.
 var sensitivePaths = []pathProbe{
-	{"/.git/HEAD", High, "Открыт каталог .git (утечка исходного кода)", "ref:"},
-	{"/.env", Critical, "Доступен файл .env (секреты приложения)", "="},
-	{"/.svn/entries", Medium, "Открыты метаданные Subversion", ""},
-	{"/.aws/credentials", Critical, "Доступны учётные данные AWS", ""},
-	{"/server-status", Medium, "Открыта страница mod_status Apache", "Apache Server Status"},
-	{"/actuator/health", Medium, "Открыт Spring Boot Actuator", "status"},
-	{"/actuator/env", High, "Actuator /env раскрывает конфигурацию и секреты", ""},
-	{"/phpinfo.php", Medium, "Доступна страница phpinfo()", "phpinfo()"},
-	{"/.DS_Store", Low, "Открыт файл .DS_Store (утечка структуры каталогов)", ""},
-	{"/backup.zip", Medium, "Доступен архив резервной копии", ""},
-	{"/wp-config.php.bak", High, "Доступна резервная копия wp-config", ""},
-	{"/.well-known/security.txt", Info, "Опубликован security.txt", ""},
+	{path: "/.git/HEAD", sev: High, title: "Открыт каталог .git (утечка исходного кода)", needle: "ref:", rawFile: true},
+	{path: "/.env", sev: Critical, title: "Доступен файл .env (секреты приложения)", needle: "=", rawFile: true},
+	{path: "/.svn/entries", sev: Medium, title: "Открыты метаданные Subversion", rawFile: true},
+	{path: "/.aws/credentials", sev: Critical, title: "Доступны учётные данные AWS", rawFile: true},
+	{path: "/server-status", sev: Medium, title: "Открыта страница mod_status Apache", needle: "Apache Server Status"},
+	{path: "/actuator/health", sev: Medium, title: "Открыт Spring Boot Actuator", needle: "status"},
+	{path: "/actuator/env", sev: High, title: "Actuator /env раскрывает конфигурацию и секреты"},
+	{path: "/phpinfo.php", sev: Medium, title: "Доступна страница phpinfo()", needle: "phpinfo()"},
+	{path: "/.DS_Store", sev: Low, title: "Открыт файл .DS_Store (утечка структуры каталогов)", rawFile: true},
+	{path: "/backup.zip", sev: Medium, title: "Доступен архив резервной копии", rawFile: true},
+	{path: "/wp-config.php.bak", sev: High, title: "Доступна резервная копия wp-config", rawFile: true},
+	{path: "/.well-known/security.txt", sev: Info, title: "Опубликован security.txt"},
 }
 
 // AuditWebPaths probes a web server for well-known sensitive paths. It first
@@ -94,6 +97,12 @@ func probePath(client *http.Client, base string, p pathProbe, catchAll bool, bas
 	if !ok || status != http.StatusOK {
 		return nil
 	}
+	// A raw file (.env, .git/HEAD, credentials, backups) is never HTML: an HTML
+	// body means a catch-all SPA served its shell (e.g. MinIO/React consoles
+	// return index.html for any path), so this is a false positive.
+	if p.rawFile && looksHTML(body) {
+		return nil
+	}
 	// A needle is the strongest signal; when present it alone decides.
 	if p.needle != "" {
 		if !strings.Contains(body, p.needle) {
@@ -113,6 +122,16 @@ func probePath(client *http.Client, base string, p pathProbe, catchAll bool, bas
 		Detail:   "доступно по " + p.path,
 		Evidence: p.path,
 	}
+}
+
+// looksHTML reports whether a response body is an HTML document, so raw-file
+// probes can reject a catch-all SPA shell served in place of the real file.
+func looksHTML(body string) bool {
+	head := strings.ToLower(strings.TrimSpace(body))
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	return strings.Contains(head, "<!doctype html") || strings.Contains(head, "<html")
 }
 
 // webBaseURL returns the scheme+host base for path probing. A bare host defaults
