@@ -42,19 +42,18 @@ func RunChecks(target string, opt AuditOptions, emit func(Finding), onSkip func(
 		}
 	}
 
-	if fs, err := AuditTLS(target, 443, opt.Timeout); err == nil {
-		add(fs)
-	} else if onSkip != nil {
-		onSkip(fmt.Sprintf("TLS пропущен: %v", err))
+	// Discover every HTTP(S) service on the host (not just 443) and audit each:
+	// headers, sensitive paths and — for https — TLS. This makes `audit <host>`
+	// universal: apps on 8000/8080/9000/3000 are covered without naming the port.
+	svcs := discoverWebServices(host, opt.PortTimeout)
+	if len(svcs) == 0 && onSkip != nil {
+		onSkip("HTTP/TLS пропущены: веб-сервисы не обнаружены")
 	}
-	if fs, err := AuditHTTP(target, opt.Timeout); err == nil {
-		add(fs)
-	} else if onSkip != nil {
-		onSkip(fmt.Sprintf("HTTP пропущен: %v", err))
+	for _, s := range svcs {
+		add(auditWebService(host, s, opt.Timeout))
 	}
 	add(AuditPorts(host, opt.PortTimeout))
 	add(AuditSMB(host, opt.PortTimeout))
-	add(AuditWebPaths(target, opt.Timeout))
 	if opt.WithDNS {
 		add(AuditDNS(host, opt.Timeout))
 	}
@@ -91,7 +90,7 @@ func RunAudit(args []string) error {
 	// Machine/report output must be clean: suppress progress chatter.
 	quiet := *asJSON || *export != ""
 	if !quiet {
-		fmt.Printf("Аудит %s: TLS, HTTP-заголовки, открытые порты ...\n", target)
+		fmt.Printf("Аудит %s: веб-сервисы (все порты), TLS, HTTP-заголовки, открытые порты ...\n", target)
 		if *active {
 			fmt.Println("  активные проверки (с вашей авторизацией): креды/сервисы/CVE ...")
 		}
