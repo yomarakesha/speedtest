@@ -3,6 +3,7 @@ package portscan
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -114,18 +115,25 @@ func DiscoverLive(ctx context.Context, opt DiscoverOptions, onPhase func(p Disco
 	}
 
 	var all []HostResult
+	var errs []error
 	for _, network := range subnets {
 		res, err := discoverSubnet(ctx, network, opt, onPhase, onHost)
 		if err != nil {
 			if len(subnets) == 1 {
 				return nil, err
 			}
-			continue // skip an unscannable subnet but keep sweeping the rest
+			// Skip an unscannable subnet but keep sweeping the rest; remember the
+			// failure so a total wipe-out isn't reported as an empty success.
+			errs = append(errs, fmt.Errorf("%s: %w", network, err))
+			continue
 		}
 		all = append(all, res...)
 		if ctx.Err() != nil {
 			break
 		}
+	}
+	if len(all) == 0 && len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 	return all, nil
 }

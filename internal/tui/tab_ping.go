@@ -16,8 +16,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// pingSampleMsg carries one probe result from the engine goroutine.
-type pingSampleMsg struct{ s ping.Sample }
+// pingSampleMsg carries one probe result from the engine goroutine. ch
+// identifies the run it belongs to: every non-key message is broadcast to all
+// tabs, and a stopped or superseded run can still have buffered samples in
+// flight, so the handler ignores samples whose channel isn't the current run's.
+type pingSampleMsg struct {
+	ch chan tea.Msg
+	s  ping.Sample
+}
 
 // pingTab is the gping-style live latency screen: a host input on top and a
 // scrolling RTT chart below with min/avg/max/loss stats.
@@ -120,7 +126,7 @@ func (t *pingTab) start() tea.Cmd {
 			Timeout:  pingTimeout,
 			Interval: pingInterval,
 		}) {
-			ch <- pingSampleMsg{s}
+			ch <- pingSampleMsg{ch: ch, s: s}
 		}
 		ch <- engineDoneMsg{ch: ch}
 	}()
@@ -166,7 +172,8 @@ func (t *pingTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		}
 
 	case pingSampleMsg:
-		if t.ch == nil {
+		// Ignore samples from a stopped or superseded run (see pingSampleMsg).
+		if !t.running || msg.ch != t.ch {
 			return t, nil
 		}
 		s := msg.s

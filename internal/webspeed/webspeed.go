@@ -96,7 +96,7 @@ func downloadCtx(parent context.Context, url string, maxDur time.Duration, sampl
 	var total, lastN int64
 	lastT := start
 	fetches := 0
-	var firstErr error
+	var firstErr, lastErr error
 
 	// Keep pulling the URL until the deadline. A big file or a continuous
 	// stream (e.g. an MJPEG camera feed) fills the whole window in one fetch;
@@ -109,6 +109,7 @@ func downloadCtx(parent context.Context, url string, maxDur time.Duration, sampl
 			if fetches == 0 {
 				firstErr = err // couldn't even start: surface it
 			}
+			lastErr = err // a later re-fetch failed (e.g. auth expiry, rate-limit)
 			break
 		}
 		fetches++
@@ -134,6 +135,14 @@ func downloadCtx(parent context.Context, url string, maxDur time.Duration, sampl
 		// but never sent a usable response (hung/firewalled), or returned empty.
 		// Report it as a failure instead of a bogus 0 Mbps "success".
 		return Result{}, fmt.Errorf("нет данных: цель не ответила за %s", maxDur)
+	}
+
+	// Some bytes arrived, but a re-fetch then failed before we gathered a
+	// reliable sample: surface the server error instead of reporting a
+	// misleadingly low speed computed over the aborted window. A large,
+	// already-reliable transfer keeps its result even if a trailing re-fetch errs.
+	if lastErr != nil && total < minReliableBytes {
+		return Result{}, lastErr
 	}
 
 	return Result{
