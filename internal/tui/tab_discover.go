@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"speedtest/internal/portscan"
 
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -20,44 +20,77 @@ type discPhaseMsg struct {
 type discHostMsg struct{ h portscan.HostResult }
 type discDoneMsg struct{ err error }
 
+// discReserveV is the vertical space above the table (progress/summary + blank).
+const discReserveV = 4
+
 // discoverTab sweeps the local subnet: liveness pass, then a port scan of each
-// live host, with results filling a table as they land.
+// live host, with results filling a scrollable table as they land.
 type discoverTab struct {
 	sty  styles
 	w, h int
 	ch   chan tea.Msg
+	tbl  table.Model
 
-	running bool
-	done    bool
-	phase   portscan.DiscoverPhase
+	running    bool
+	done       bool
+	allSubnets bool
+	phase      portscan.DiscoverPhase
 	pdone   int
 	ptotal  int
 	hosts   []portscan.HostResult
 	err     error
 }
 
-func newDiscoverTab() tab { return &discoverTab{sty: newStyles()} }
+func newDiscoverTab() tab {
+	return &discoverTab{sty: newStyles(), tbl: newTable(discoverColumns(80), 10)}
+}
 
 func (t *discoverTab) Title() string { return "Обзор" }
 func (t *discoverTab) Init() tea.Cmd { return nil }
+func (t *discoverTab) Busy() bool    { return t.running }
 
 func (t *discoverTab) ShortHelp() []string {
-	return []string{"[Enter] обзор локальной сети", "[r] повторить"}
+	scope := "[a] все подсети: выкл"
+	if t.allSubnets {
+		scope = "[a] все подсети: вкл"
+	}
+	return []string{"[Enter] обзор локальной сети", scope, "[↑/↓] прокрутка", "[r] повторить"}
 }
 
-func (t *discoverTab) Capturing() bool  { return false }
-func (t *discoverTab) SetSize(w, h int) { t.w, t.h = w, h }
+func (t *discoverTab) Capturing() bool { return false }
+
+func (t *discoverTab) SetSize(w, h int) {
+	t.w, t.h = w, h
+	t.tbl.SetColumns(discoverColumns(w))
+	t.tbl.SetHeight(max(h-discReserveV, 3))
+}
+
+// discoverColumns sizes the columns to the available width: IP/vendor fixed,
+// name and ports share the slack.
+func discoverColumns(w int) []table.Column {
+	const ipW, vendorW = 15, 16
+	rest := max(w-ipW-vendorW-8, 20)
+	nameW := rest * 3 / 5
+	portsW := rest - nameW
+	return []table.Column{
+		{Title: "IP", Width: ipW},
+		{Title: "Имя", Width: nameW},
+		{Title: "Производитель", Width: vendorW},
+		{Title: "Порты", Width: portsW},
+	}
+}
 
 func (t *discoverTab) start() tea.Cmd {
 	t.running, t.done = true, false
 	t.phase, t.pdone, t.ptotal = portscan.PhaseLiveness, 0, 0
 	t.hosts, t.err = nil, nil
+	t.tbl.SetRows(nil)
 
 	ch := make(chan tea.Msg, 256)
 	t.ch = ch
 	go func() {
 		_, err := portscan.DiscoverLive(context.Background(),
-			portscan.DiscoverOptions{Timeout: 500 * time.Millisecond, Workers: 500},
+			portscan.DiscoverOptions{Timeout: discoverTimeout, Workers: discoverWorkers, AllSubnets: t.allSubnets},
 			func(p portscan.DiscoverPhase, done, total int) { ch <- discPhaseMsg{p, done, total} },
 			func(h portscan.HostResult) { ch <- discHostMsg{h} })
 		ch <- discDoneMsg{err}
@@ -73,11 +106,22 @@ func (t *discoverTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 			if !t.running {
 				return t, t.start()
 			}
+			return t, nil
 		case "r":
 			if t.done {
 				return t, t.start()
 			}
+			return t, nil
+		case "a":
+			if !t.running {
+				t.allSubnets = !t.allSubnets
+			}
+			return t, nil
 		}
+		// Other keys (↑/↓/pgup/pgdn/home/end) scroll the table.
+		var cmd tea.Cmd
+		t.tbl, cmd = t.tbl.Update(msg)
+		return t, cmd
 
 	case discPhaseMsg:
 		t.phase, t.pdone, t.ptotal = msg.phase, msg.done, msg.total
@@ -86,6 +130,7 @@ func (t *discoverTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 	case discHostMsg:
 		t.hosts = append(t.hosts, msg.h)
 		sort.Slice(t.hosts, func(i, j int) bool { return ipLess(t.hosts[i].IP, t.hosts[j].IP) })
+		t.refreshRows()
 		return t, listen(t.ch)
 
 	case discDoneMsg:
@@ -96,6 +141,19 @@ func (t *discoverTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 	return t, nil
 }
 
+func (t *discoverTab) refreshRows() {
+	rows := make([]table.Row, 0, len(t.hosts))
+	for _, h := range t.hosts {
+		rows = append(rows, table.Row{
+			h.IP,
+			trunc(h.Hostname, 28),
+			trunc(h.Vendor, 16),
+			portsSummary(h.Open),
+		})
+	}
+	t.tbl.SetRows(rows)
+}
+
 func (t *discoverTab) View() string {
 	var b strings.Builder
 	switch {
@@ -104,10 +162,7 @@ func (t *discoverTab) View() string {
 		if t.phase == portscan.PhaseScan {
 			label = "Скан портов найденных хостов"
 		}
-		bw := t.w - 30
-		if bw < 10 {
-			bw = 10
-		}
+		bw := max(t.w-30, 10)
 		frac := 0.0
 		if t.ptotal > 0 {
 			frac = float64(t.pdone) / float64(t.ptotal)
@@ -115,38 +170,25 @@ func (t *discoverTab) View() string {
 		fmt.Fprintf(&b, "%s %s  %s %d/%d\n\n",
 			t.sty.accent.Render("●"), label,
 			bar(frac, bw, t.sty.accent, t.sty.muted), t.pdone, t.ptotal)
-		b.WriteString(t.table())
+		b.WriteString(t.tbl.View())
 	case t.done:
 		if t.err != nil {
 			b.WriteString(t.sty.bad.Render("Ошибка: " + t.err.Error()))
 		} else {
 			fmt.Fprintf(&b, "%s\n\n", t.sty.big.Render(fmt.Sprintf("Найдено устройств: %d", len(t.hosts))))
-			b.WriteString(t.table())
+			b.WriteString(t.tbl.View())
 		}
 	default:
-		b.WriteString(t.sty.muted.Render("Обзор всей локальной подсети: живые устройства, их открытые порты,\nMAC-адреса и производители. Нажмите Enter."))
+		scope := "текущая подсеть"
+		if t.allSubnets {
+			scope = "ВСЕ подсети машины"
+		}
+		fmt.Fprintf(&b, "%s\n\n%s",
+			t.sty.muted.Render("Обзор локальной сети: живые устройства, их открытые порты,\nMAC-адреса и производители. Нажмите Enter."),
+			t.sty.muted.Render("Область: "+scope+"  ([a] переключить)"))
 	}
 	return lipgloss.Place(t.w, t.h, lipgloss.Left, lipgloss.Top,
 		t.sty.frame("Обзор сети", t.w, t.h, b.String()))
-}
-
-func (t *discoverTab) table() string {
-	if len(t.hosts) == 0 {
-		return t.sty.muted.Render("Пока пусто...")
-	}
-	var b strings.Builder
-	header := fmt.Sprintf("%-16s %-22s %-18s %s", "IP", "Имя", "Производитель", "Порты")
-	b.WriteString(t.sty.muted.Render(header))
-	b.WriteString("\n")
-	for _, h := range t.hosts {
-		name := trunc(h.Hostname, 22)
-		vendor := trunc(h.Vendor, 18)
-		ports := portsSummary(h.Open)
-		fmt.Fprintf(&b, "%-16s %-22s %-18s %s\n",
-			t.sty.accent.Render(fmt.Sprintf("%-16s", h.IP)),
-			name, vendor, t.sty.good.Render(ports))
-	}
-	return b.String()
 }
 
 func portsSummary(open []portscan.PortInfo) string {
@@ -177,7 +219,7 @@ func ipLess(a, b string) bool {
 	if len(pa) != 4 || len(pb) != 4 {
 		return a < b
 	}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if pa[i] != pb[i] {
 			return atoiSafe(pa[i]) < atoiSafe(pb[i])
 		}

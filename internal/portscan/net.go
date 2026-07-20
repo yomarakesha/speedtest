@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os/exec"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -89,6 +92,153 @@ func hostsInCIDR(cidr string) ([]string, error) {
 		hosts = hosts[1 : len(hosts)-1]
 	}
 	return hosts, nil
+}
+
+// IfaceInfo describes one up, non-loopback interface and an IPv4 subnet it owns.
+type IfaceInfo struct {
+	Name string
+	IP   string
+	CIDR string
+}
+
+// localInterfaces returns every usable IPv4 subnet the machine is directly
+// attached to, one entry per interface address. Down, loopback, link-local and
+// non-IPv4 addresses are skipped.
+func localInterfaces() []IfaceInfo {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []IfaceInfo
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifi.Addrs()
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip4 := ipnet.IP.To4()
+			if ip4 == nil || ip4.IsLinkLocalUnicast() {
+				continue
+			}
+			cidr := (&net.IPNet{IP: ip4.Mask(ipnet.Mask), Mask: ipnet.Mask}).String()
+			out = append(out, IfaceInfo{Name: ifi.Name, IP: ip4.String(), CIDR: cidr})
+		}
+	}
+	return out
+}
+
+// localSubnets returns the deduplicated set of IPv4 subnets worth sweeping:
+// every directly-attached interface subnet plus any extra on-link subnets from
+// the routing table (other VLANs / interfaces). Each is capped at /16 by
+// hostsInCIDR; the result is sorted for stable output.
+func localSubnets() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(cidr string) {
+		if cidr == "" || seen[cidr] {
+			return
+		}
+		if _, err := hostsInCIDR(cidr); err != nil {
+			return // too large, non-IPv4, or malformed
+		}
+		seen[cidr] = true
+		out = append(out, cidr)
+	}
+	for _, ifi := range localInterfaces() {
+		add(ifi.CIDR)
+	}
+	for _, cidr := range routedSubnets() {
+		add(cidr)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// routedSubnets parses the OS routing table for extra on-link IPv4 subnets.
+// Best-effort: returns nil if the routing tool is missing or output can't be
+// parsed, in which case callers fall back to interface subnets alone.
+func routedSubnets() []string {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("route", "print", "-4")
+	case "linux":
+		cmd = exec.Command("ip", "-4", "route")
+	default:
+		return nil // macOS/BSD netstat output is abbreviated; skip
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	return parseRoutes(string(out), runtime.GOOS)
+}
+
+// parseRoutes extracts candidate IPv4 subnet CIDRs from routing-table output.
+// Windows rows are "dest netmask gateway iface metric"; Linux `ip route` rows
+// begin with a CIDR (or "default"). Uninteresting routes are dropped.
+func parseRoutes(text, goos string) []string {
+	var out []string
+	for line := range strings.SplitSeq(text, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		var cidr string
+		if goos == "windows" {
+			cidr = routeToCIDR(f[0], f[1])
+		} else if strings.Contains(f[0], "/") {
+			cidr = f[0]
+		}
+		if usefulSubnet(cidr) {
+			out = append(out, cidr)
+		}
+	}
+	return out
+}
+
+// routeToCIDR turns a dotted destination + dotted netmask into a CIDR string,
+// or "" if either is not a valid IPv4 address/mask.
+func routeToCIDR(dest, mask string) string {
+	dip := net.ParseIP(dest).To4()
+	mip := net.ParseIP(mask).To4()
+	if dip == nil || mip == nil {
+		return ""
+	}
+	m := net.IPMask(mip)
+	ones, bits := m.Size()
+	if bits != 32 { // non-contiguous mask
+		return ""
+	}
+	return fmt.Sprintf("%s/%d", dip.Mask(m).String(), ones)
+}
+
+// usefulSubnet reports whether a CIDR is a real, scannable LAN subnet (not a
+// default route, host route, loopback, link-local or multicast block).
+func usefulSubnet(cidr string) bool {
+	if cidr == "" {
+		return false
+	}
+	ip, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return false
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	ones, _ := ipnet.Mask.Size()
+	if ones == 0 || ones >= 31 { // default route or host route
+		return false
+	}
+	if ip4[0] == 127 || ip4[0] >= 224 || (ip4[0] == 169 && ip4[1] == 254) {
+		return false
+	}
+	return true
 }
 
 func cloneIP(ip net.IP) net.IP {

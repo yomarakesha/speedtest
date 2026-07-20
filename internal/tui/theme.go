@@ -39,7 +39,7 @@ type styles struct {
 	tabIdle   lipgloss.Style
 	tabBar    lipgloss.Style
 	panel     lipgloss.Style
-	panelTtl  lipgloss.Style
+	panelTTL  lipgloss.Style
 	statusBar lipgloss.Style
 	key       lipgloss.Style
 	help      lipgloss.Style
@@ -63,7 +63,7 @@ func newStyles() styles {
 		panel: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).BorderForeground(palette.Border).
 			Padding(0, 1),
-		panelTtl:  lipgloss.NewStyle().Bold(true).Foreground(palette.Accent2),
+		panelTTL:  lipgloss.NewStyle().Bold(true).Foreground(palette.Accent2),
 		statusBar: lipgloss.NewStyle().Foreground(palette.Muted),
 		key:       lipgloss.NewStyle().Bold(true).Foreground(palette.Accent),
 		help:      lipgloss.NewStyle().Foreground(palette.Muted),

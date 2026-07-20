@@ -2,11 +2,16 @@ package portscan
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// errNoSubnets is returned when an all-subnets sweep finds no attached IPv4 LAN.
+var errNoSubnets = errors.New("не найдено локальных подсетей для сканирования")
 
 // ScanOptions configures a single-host streaming scan.
 type ScanOptions struct {
@@ -70,11 +75,12 @@ func ScanLive(ctx context.Context, opt ScanOptions, onProgress func(done, total 
 
 // DiscoverOptions configures a streaming subnet discovery.
 type DiscoverOptions struct {
-	CIDR    string // empty => auto-detected local /24
-	Ports   []int  // empty => defaultDiscoverPorts
-	Timeout time.Duration
-	Workers int
-	ScanAll bool // skip the liveness pre-check
+	CIDR       string // empty => auto-detected local /24
+	Ports      []int  // empty => defaultDiscoverPorts
+	Timeout    time.Duration
+	Workers    int
+	ScanAll    bool // skip the liveness pre-check
+	AllSubnets bool // sweep every directly-attached subnet, not just one
 }
 
 // DiscoverPhase names the two stages a UI can show.
@@ -85,18 +91,56 @@ const (
 	PhaseScan     DiscoverPhase = "scan"
 )
 
-// DiscoverLive sweeps a subnet. onPhase reports stage progress (done/total),
-// onHost fires as each live host finishes its port scan (both may be nil). It
-// returns the enriched results. Used by the TUI.
+// DiscoverLive sweeps one subnet, or every directly-attached subnet when
+// opt.AllSubnets is set. onPhase reports stage progress (done/total, reset per
+// subnet), onHost fires as each live host finishes its port scan (both may be
+// nil). It returns the enriched results. Used by the TUI and CLI.
 func DiscoverLive(ctx context.Context, opt DiscoverOptions, onPhase func(p DiscoverPhase, done, total int), onHost func(HostResult)) ([]HostResult, error) {
-	network := opt.CIDR
-	if network == "" {
-		auto, err := localCIDR()
-		if err != nil {
-			return nil, err
+	var subnets []string
+	if opt.AllSubnets {
+		subnets = localSubnets()
+		if len(subnets) == 0 {
+			return nil, errNoSubnets
 		}
-		network = auto
+	} else {
+		network := opt.CIDR
+		if network == "" {
+			auto, err := localCIDR()
+			if err != nil {
+				return nil, err
+			}
+			network = auto
+		}
+		subnets = []string{network}
 	}
+
+	var all []HostResult
+	var errs []error
+	for _, network := range subnets {
+		res, err := discoverSubnet(ctx, network, opt, onPhase, onHost)
+		if err != nil {
+			if len(subnets) == 1 {
+				return nil, err
+			}
+			// Skip an unscannable subnet but keep sweeping the rest; remember the
+			// failure so a total wipe-out isn't reported as an empty success.
+			errs = append(errs, fmt.Errorf("%s: %w", network, err))
+			continue
+		}
+		all = append(all, res...)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if len(all) == 0 && len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return all, nil
+}
+
+// discoverSubnet sweeps a single CIDR: liveness pre-check, then a bounded port
+// scan of every live host, enriching and streaming each result.
+func discoverSubnet(ctx context.Context, network string, opt DiscoverOptions, onPhase func(p DiscoverPhase, done, total int), onHost func(HostResult)) ([]HostResult, error) {
 	hosts, err := hostsInCIDR(network)
 	if err != nil {
 		return nil, err

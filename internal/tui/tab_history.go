@@ -9,6 +9,7 @@ import (
 	"speedtest/internal/history"
 
 	"github.com/NimbleMarkets/ntcharts/sparkline"
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -25,19 +26,26 @@ type historyExportedMsg struct {
 	err  error
 }
 
-// historyTab shows recent runs and a download-speed trend sparkline, and can
-// export the log to CSV/JSON.
+// histReserveV is the vertical space above the table (trend graph + headers).
+const histReserveV = 11
+
+// historyTab shows a download-speed trend sparkline and a scrollable table of
+// past runs, and can export the log to CSV/JSON.
 type historyTab struct {
 	sty    styles
 	w, h   int
 	recs   []history.Record
+	tbl    table.Model
 	err    error
 	status string
 }
 
-func newHistoryTab() tab { return &historyTab{sty: newStyles()} }
+func newHistoryTab() tab {
+	return &historyTab{sty: newStyles(), tbl: newTable(historyColumns(80), 8)}
+}
 
 func (t *historyTab) Title() string { return "История" }
+func (t *historyTab) Busy() bool    { return false }
 
 func (t *historyTab) Init() tea.Cmd {
 	return func() tea.Msg {
@@ -47,11 +55,27 @@ func (t *historyTab) Init() tea.Cmd {
 }
 
 func (t *historyTab) ShortHelp() []string {
-	return []string{"[r] обновить", "[c] экспорт CSV", "[j] экспорт JSON"}
+	return []string{"[↑/↓] прокрутка", "[r] обновить", "[c] экспорт CSV", "[j] экспорт JSON"}
 }
 
-func (t *historyTab) Capturing() bool  { return false }
-func (t *historyTab) SetSize(w, h int) { t.w, t.h = w, h }
+func (t *historyTab) Capturing() bool { return false }
+
+func (t *historyTab) SetSize(w, h int) {
+	t.w, t.h = w, h
+	t.tbl.SetColumns(historyColumns(w))
+	t.tbl.SetHeight(max(h-histReserveV, 3))
+}
+
+// historyColumns sizes columns to width: time/kind fixed, details take the rest.
+func historyColumns(w int) []table.Column {
+	const timeW, kindW = 12, 9
+	detailW := max(w-timeW-kindW-8, 24)
+	return []table.Column{
+		{Title: "Время", Width: timeW},
+		{Title: "Тип", Width: kindW},
+		{Title: "Результат", Width: detailW},
+	}
+}
 
 func (t *historyTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -64,9 +88,13 @@ func (t *historyTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		case "j":
 			return t, t.export("json")
 		}
+		var cmd tea.Cmd
+		t.tbl, cmd = t.tbl.Update(msg)
+		return t, cmd
 
 	case historyLoadedMsg:
 		t.recs, t.err = msg.recs, msg.err
+		t.refreshRows()
 		return t, nil
 
 	case historyExportedMsg:
@@ -78,6 +106,20 @@ func (t *historyTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		return t, nil
 	}
 	return t, nil
+}
+
+// refreshRows rebuilds the table rows newest-first from the loaded records.
+func (t *historyTab) refreshRows() {
+	rows := make([]table.Row, 0, len(t.recs))
+	for i := len(t.recs) - 1; i >= 0; i-- {
+		r := t.recs[i]
+		rows = append(rows, table.Row{
+			r.Time.Format("01-02 15:04"),
+			string(r.Kind),
+			histDetail(r),
+		})
+	}
+	t.tbl.SetRows(rows)
 }
 
 // export writes the current records to a timestamped file next to history.jsonl.
@@ -114,7 +156,8 @@ func (t *historyTab) View() string {
 	default:
 		b.WriteString(t.trend())
 		b.WriteString("\n\n")
-		b.WriteString(t.recent())
+		fmt.Fprintf(&b, "%s\n", t.sty.muted.Render(fmt.Sprintf("Всего записей: %d", len(t.recs))))
+		b.WriteString(t.tbl.View())
 	}
 	if t.status != "" {
 		b.WriteString("\n\n")
@@ -131,19 +174,14 @@ func (t *historyTab) trend() string {
 	for _, r := range t.recs {
 		if r.DownloadMbps > 0 {
 			vals = append(vals, r.DownloadMbps)
-			if r.DownloadMbps > peak {
-				peak = r.DownloadMbps
-			}
+			peak = max(peak, r.DownloadMbps)
 		}
 	}
 	if len(vals) == 0 {
 		return t.sty.muted.Render("Нет данных о скорости загрузки для графика.")
 	}
-	cw := t.w - 6
-	if cw < 10 {
-		cw = 10
-	}
-	sl := sparkline.New(cw, 5, sparkline.WithMaxValue(peak*1.1), sparkline.WithStyle(t.sty.good))
+	cw := max(t.w-6, 10)
+	sl := sparkline.New(cw, 4, sparkline.WithMaxValue(peak*1.1), sparkline.WithStyle(t.sty.good))
 	// Show only the most recent cw samples so the graph fits.
 	if len(vals) > cw {
 		vals = vals[len(vals)-cw:]
@@ -156,38 +194,14 @@ func (t *historyTab) trend() string {
 	return head + "\n" + sl.View()
 }
 
-// recent lists the last runs, newest first.
-func (t *historyTab) recent() string {
-	var b strings.Builder
-	b.WriteString(t.sty.muted.Render(fmt.Sprintf("Всего записей: %d — последние:", len(t.recs))))
-	b.WriteString("\n")
-
-	max := t.h - 12
-	if max < 3 {
-		max = 3
-	}
-	start := 0
-	if len(t.recs) > max {
-		start = len(t.recs) - max
-	}
-	for i := len(t.recs) - 1; i >= start; i-- {
-		r := t.recs[i]
-		fmt.Fprintf(&b, "  %s  %s  %s\n",
-			t.sty.muted.Render(r.Time.Format("01-02 15:04")),
-			t.sty.accent.Render(fmt.Sprintf("%-8s", r.Kind)),
-			histLine(t.sty, r))
-	}
-	return b.String()
-}
-
-func histLine(sty styles, r history.Record) string {
+// histDetail is the one-line result summary for a record's table row.
+func histDetail(r history.Record) string {
 	switch r.Kind {
 	case history.KindInternet, history.KindLAN:
-		return fmt.Sprintf("%s ↓ %s ↑ %s  пинг %.0f мс", trunc(r.Target, 16),
-			sty.good.Render(fmtMbps(r.DownloadMbps)),
-			sty.accent.Render(fmtMbps(r.UploadMbps)), r.PingMs)
+		return fmt.Sprintf("%s  ↓ %s  ↑ %s  пинг %.0f мс", trunc(r.Target, 16),
+			fmtMbps(r.DownloadMbps), fmtMbps(r.UploadMbps), r.PingMs)
 	case history.KindHTTPDL:
-		return fmt.Sprintf("%s  ↓ %s", trunc(r.Target, 24), sty.good.Render(fmtMbps(r.DownloadMbps)))
+		return fmt.Sprintf("%s  ↓ %s", trunc(r.Target, 28), fmtMbps(r.DownloadMbps))
 	case history.KindPing:
 		return fmt.Sprintf("%s  %.1f мс  потери %.0f%%", trunc(r.Target, 20), r.PingMs, r.LossPct)
 	case history.KindTrace:

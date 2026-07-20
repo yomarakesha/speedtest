@@ -1,0 +1,176 @@
+# Default rule set for the declarative audit engine. Each rule matches evidence
+# gathered from a host (a service banner, an HTTP header, the response body, or
+# the status code) and emits a Finding when it fires.
+#
+# Match modes (pick one):
+#   contains:   case-insensitive substring
+#   regex:      RE2 regular expression (Go regexp)
+#   product + version_lt [+ version_ge]:  extract "<product>/<version>" from the
+#               source and fire when the detected version is in [version_ge,
+#               version_lt). This avoids the classic substring false positive
+#               where "Apache/2.2." also matches patched 2.2.x builds.
+#
+# source: banner (default) | header | body | status
+# port:   optional; when set the rule only applies to that port.
+# header: required when source == header (the header name to read).
+
+rules:
+  # --- Service-banner CVE leads -------------------------------------------
+  - id: openssh-7.2-userenum
+    check: cve.known_vulnerable
+    severity: medium
+    cve: CVE-2016-6210
+    title: "OpenSSH 7.2: перечисление пользователей по времени ответа"
+    source: banner
+    contains: "OpenSSH_7.2"
+
+  - id: openssh-6.6-authbypass
+    check: cve.known_vulnerable
+    severity: medium
+    cve: CVE-2015-5600
+    title: "OpenSSH 6.6: обход ограничения попыток аутентификации"
+    source: banner
+    contains: "OpenSSH_6.6"
+
+  - id: vsftpd-2.3.4-backdoor
+    check: cve.known_vulnerable
+    severity: critical
+    cve: CVE-2011-2523
+    title: "vsftpd 2.3.4: бэкдор с удалённым выполнением команд"
+    source: banner
+    contains: "vsFTPd 2.3.4"
+
+  - id: proftpd-1.3.3-overflow
+    check: cve.known_vulnerable
+    severity: critical
+    cve: CVE-2010-4221
+    title: "ProFTPD 1.3.3: удалённое переполнение буфера"
+    source: banner
+    contains: "ProFTPD 1.3.3"
+
+  - id: apache-2.4.49-rce
+    check: cve.known_vulnerable
+    severity: critical
+    cve: CVE-2021-41773
+    title: "Apache 2.4.49: обход пути и RCE"
+    source: banner
+    contains: "Apache/2.4.49"
+
+  # Version-range: Apache httpd 2.2.x before 2.2.33 is the vulnerable window;
+  # a plain "Apache/2.2." substring also flags patched builds — version compare
+  # does not.
+  - id: apache-2.2-authbypass
+    check: cve.known_vulnerable
+    severity: high
+    cve: CVE-2017-3167
+    title: "Apache 2.2.x до 2.2.33: обход аутентификации (mod_auth)"
+    source: banner
+    product: "Apache"
+    version_ge: "2.2.0"
+    version_lt: "2.2.33"
+
+  - id: nginx-1.3-chunked-overflow
+    check: cve.known_vulnerable
+    severity: high
+    cve: CVE-2013-2028
+    title: "nginx 1.3.9–1.4.0: переполнение стека при chunked-запросах"
+    source: banner
+    product: "nginx"
+    version_ge: "1.3.9"
+    version_lt: "1.4.1"
+
+  - id: exim-4.87-rce
+    check: cve.known_vulnerable
+    severity: critical
+    cve: CVE-2019-10149
+    title: "Exim 4.87–4.91: удалённое выполнение команд (return-path)"
+    source: banner
+    product: "Exim"
+    version_ge: "4.87"
+    version_lt: "4.92"
+
+  - id: iis-6.0-webdav
+    check: cve.known_vulnerable
+    severity: critical
+    cve: CVE-2017-7269
+    title: "IIS 6.0: переполнение буфера в WebDAV (ScStoragePathFromUrl)"
+    source: banner
+    contains: "Microsoft-IIS/6.0"
+
+  # --- HTTP header / body leads -------------------------------------------
+  - id: php-tech-disclosure
+    check: http.tech_disclosure
+    severity: info
+    title: "Раскрыт стек через X-Powered-By"
+    source: header
+    header: "X-Powered-By"
+    regex: "(?i)php|asp\\.net|express"
+
+  - id: phpinfo-exposed
+    check: http.phpinfo_exposed
+    severity: medium
+    title: "Доступна страница phpinfo() (утечка конфигурации)"
+    source: body
+    contains: "phpinfo()"
+
+  - id: elasticsearch-open
+    check: creds.elastic_noauth
+    severity: high
+    title: "Elasticsearch отвечает без аутентификации"
+    source: body
+    contains: "\"cluster_name\""
+
+  # --- Exposed admin panels / management APIs (body signatures) ------------
+  - id: jenkins-exposed
+    check: web.exposed_panel
+    severity: medium
+    title: "Открыта панель Jenkins"
+    source: body
+    contains: "Dashboard [Jenkins]"
+
+  - id: phpmyadmin-exposed
+    check: web.exposed_panel
+    severity: medium
+    title: "Открыт phpMyAdmin"
+    source: body
+    contains: "phpMyAdmin"
+
+  - id: grafana-exposed
+    check: web.exposed_panel
+    severity: low
+    title: "Открыта панель Grafana"
+    source: body
+    regex: "(?i)grafana"
+
+  - id: kibana-exposed
+    check: web.exposed_panel
+    severity: low
+    title: "Открыта панель Kibana"
+    source: body
+    contains: "kbn-name"
+
+  - id: docker-api-exposed
+    check: creds.docker_noauth
+    severity: critical
+    title: "Открыт Docker Engine API без аутентификации"
+    source: body
+    contains: "\"ApiVersion\""
+
+  - id: k8s-api-anon
+    check: creds.k8s_anon
+    severity: high
+    title: "Kubernetes API отвечает анонимно"
+    source: body
+    regex: "\"kind\"\\s*:\\s*\"(Status|APIVersions)\""
+
+  # (spring-heapdump moved to a path probe in webpaths.go: it must GET
+  # /actuator/heapdump and match the HPROF magic, not inspect the root
+  # Content-Type — a header rule on "/" never sees the heapdump endpoint.)
+
+  - id: gitlab-exposed
+    check: web.exposed_panel
+    severity: info
+    title: "Обнаружен GitLab"
+    source: header
+    header: "X-Gitlab-Feature-Category"
+    regex: ".+"

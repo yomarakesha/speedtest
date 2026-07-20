@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"speedtest/internal/config"
 	"speedtest/internal/trace"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -30,18 +31,20 @@ type traceTab struct {
 	err     error
 }
 
-func newTraceTab() tab {
+func newTraceTab(seed string) tab {
 	s := newStyles()
 	ti := textinput.New()
 	ti.Placeholder = "8.8.8.8 или ya.ru"
 	ti.CharLimit = 253
 	ti.Prompt = "Цель: "
+	ti.SetValue(seed)
 	ti.Focus()
 	return &traceTab{sty: s, input: ti}
 }
 
 func (t *traceTab) Title() string { return "Трейс" }
 func (t *traceTab) Init() tea.Cmd { return textinput.Blink }
+func (t *traceTab) Busy() bool    { return t.running }
 
 func (t *traceTab) ShortHelp() []string {
 	return []string{"[Enter] старт/стоп", "живые потери и RTT по хопам"}
@@ -55,6 +58,7 @@ func (t *traceTab) start() tea.Cmd {
 	if host == "" {
 		return nil
 	}
+	config.Remember("trace", host)
 	t.host = host
 	t.running = true
 	t.hops = nil
@@ -72,7 +76,7 @@ func (t *traceTab) start() tea.Cmd {
 			case <-ctx.Done():
 			}
 		})
-		ch <- engineDoneMsg{err}
+		ch <- engineDoneMsg{ch: ch, err: err}
 	}()
 	return listen(ch)
 }
@@ -105,6 +109,9 @@ func (t *traceTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		return t, listen(t.ch)
 
 	case engineDoneMsg:
+		if msg.ch != t.ch { // completion from another tab's engine — ignore
+			return t, nil
+		}
 		t.running = false
 		if msg.err != nil {
 			t.err = msg.err
@@ -137,6 +144,10 @@ func (t *traceTab) View() string {
 		fmt.Fprintf(&b, "%s  до %s\n\n", state, t.sty.accent.Render(t.host))
 		b.WriteString(t.table())
 	default:
+		if hint := hostHint(t.sty, t.input.Value()); hint != "" {
+			b.WriteString(hint)
+			b.WriteString("\n")
+		}
 		b.WriteString(t.sty.muted.Render("Трассировка пути до цели + непрерывный пинг каждого узла:\nпотери и задержка по хопам обновляются вживую (без прав администратора)."))
 	}
 
@@ -145,10 +156,7 @@ func (t *traceTab) View() string {
 }
 
 func (t *traceTab) table() string {
-	nameW := t.w - 46
-	if nameW < 14 {
-		nameW = 14
-	}
+	nameW := max(t.w-46, 14)
 	var b strings.Builder
 	header := fmt.Sprintf("%-3s %-*s %6s %7s %7s %7s", "#", nameW, "Хост", "Потери", "Посл", "Сред", "Худш")
 	b.WriteString(t.sty.muted.Render(header))

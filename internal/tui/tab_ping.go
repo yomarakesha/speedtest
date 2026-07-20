@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
+	"speedtest/internal/config"
 	"speedtest/internal/history"
 	"speedtest/internal/ping"
 
@@ -16,8 +16,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// pingSampleMsg carries one probe result from the engine goroutine.
-type pingSampleMsg struct{ s ping.Sample }
+// pingSampleMsg carries one probe result from the engine goroutine. ch
+// identifies the run it belongs to: every non-key message is broadcast to all
+// tabs, and a stopped or superseded run can still have buffered samples in
+// flight, so the handler ignores samples whose channel isn't the current run's.
+type pingSampleMsg struct {
+	ch chan tea.Msg
+	s  ping.Sample
+}
 
 // pingTab is the gping-style live latency screen: a host input on top and a
 // scrolling RTT chart below with min/avg/max/loss stats.
@@ -39,11 +45,12 @@ type pingTab struct {
 	chartMax   float64
 }
 
-func newPingTab() tab {
+func newPingTab(seed string) tab {
 	ti := textinput.New()
 	ti.Placeholder = "8.8.8.8 или host:port"
 	ti.CharLimit = 253
 	ti.Prompt = "Хост: "
+	ti.SetValue(seed)
 	ti.Focus()
 	t := &pingTab{st: newStyles(), input: ti, chartMax: 50}
 	t.newChart()
@@ -52,6 +59,7 @@ func newPingTab() tab {
 
 func (t *pingTab) Title() string { return "Пинг" }
 func (t *pingTab) Init() tea.Cmd { return textinput.Blink }
+func (t *pingTab) Busy() bool    { return t.running }
 
 func (t *pingTab) ShortHelp() []string {
 	return []string{"[Enter] старт/стоп", "[Esc] сброс", "ввод хоста активен"}
@@ -69,15 +77,7 @@ func (t *pingTab) SetSize(w, h int) {
 // chartSize returns the chart dimensions inside the frame: frame border+padding
 // eats 4 columns and 2 rows; input + stats lines eat 4 more rows.
 func (t *pingTab) chartSize() (int, int) {
-	cw := t.w - 6
-	if cw < 10 {
-		cw = 10
-	}
-	ch := t.h - 8
-	if ch < 4 {
-		ch = 4
-	}
-	return cw, ch
+	return max(t.w-6, 10), max(t.h-8, 4)
 }
 
 // newChart builds a fresh chart sized for the current max RTT scale.
@@ -105,6 +105,7 @@ func (t *pingTab) start() tea.Cmd {
 	if host == "" {
 		return nil
 	}
+	config.Remember("ping", host)
 	t.host = ping.NormalizeHost(host, ping.DefaultPort)
 	t.sent, t.recv, t.sum, t.last = 0, 0, 0, 0
 	t.min, t.max = 0, 0
@@ -122,12 +123,12 @@ func (t *pingTab) start() tea.Cmd {
 		for s := range ping.Probe(ctx, ping.Options{
 			Host:     t.host,
 			Count:    0, // до остановки
-			Timeout:  2 * time.Second,
-			Interval: 1 * time.Second,
+			Timeout:  pingTimeout,
+			Interval: pingInterval,
 		}) {
-			ch <- pingSampleMsg{s}
+			ch <- pingSampleMsg{ch: ch, s: s}
 		}
-		ch <- engineDoneMsg{}
+		ch <- engineDoneMsg{ch: ch}
 	}()
 	return listen(ch)
 }
@@ -171,7 +172,8 @@ func (t *pingTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		}
 
 	case pingSampleMsg:
-		if t.ch == nil {
+		// Ignore samples from a stopped or superseded run (see pingSampleMsg).
+		if !t.running || msg.ch != t.ch {
 			return t, nil
 		}
 		s := msg.s
@@ -218,6 +220,8 @@ func (t *pingTab) View() string {
 
 	if t.running || t.sent > 0 {
 		b.WriteString(t.statsLine())
+	} else if hint := hostHint(t.st, t.input.Value()); hint != "" {
+		b.WriteString(hint)
 	} else {
 		b.WriteString(t.st.muted.Render("Введите хост и нажмите Enter — график задержки в реальном времени."))
 	}
@@ -255,10 +259,24 @@ func (t *pingTab) statsLine() string {
 	}
 	return fmt.Sprintf("%s   тек %s   мин %s   сред %s   макс %s   потери %s   (%d/%d)",
 		state,
-		t.st.big.Render(fmt.Sprintf("%.1f мс", t.last)),
-		t.st.accent.Render(fmt.Sprintf("%.1f", t.min)),
-		t.st.accent.Render(fmt.Sprintf("%.1f", avg)),
-		t.st.accent.Render(fmt.Sprintf("%.1f", t.max)),
+		rttStyle(t.st, t.last).Bold(true).Render(fmt.Sprintf("%.1f мс", t.last)),
+		rttStyle(t.st, t.min).Render(fmt.Sprintf("%.1f", t.min)),
+		rttStyle(t.st, avg).Render(fmt.Sprintf("%.1f", avg)),
+		rttStyle(t.st, t.max).Render(fmt.Sprintf("%.1f", t.max)),
 		lossStyle.Render(fmt.Sprintf("%.0f%%", loss)),
 		t.recv, t.sent)
+}
+
+// rttStyle colors a latency value by band: good < 50 мс, warn < 150 мс, else bad.
+func rttStyle(s styles, ms float64) lipgloss.Style {
+	switch {
+	case ms <= 0:
+		return s.muted
+	case ms < 50:
+		return s.good
+	case ms < 150:
+		return s.warn
+	default:
+		return s.bad
+	}
 }

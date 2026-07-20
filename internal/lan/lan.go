@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"os/signal"
 	"sync/atomic"
 	"time"
 
@@ -178,6 +180,54 @@ func Run(args []string) error {
 	}
 }
 
+// ServerInfo describes a running embedded LAN-test server.
+type ServerInfo struct {
+	Port  string   // the bound TCP port
+	Addrs []string // local "ip:port" addresses a client can connect to
+}
+
+// Serve starts a LAN-test server on addr (":5201" when empty) and accepts
+// connections in the background until ctx is canceled. It returns immediately
+// with the bound port and local addresses so a UI can show how to connect.
+// The TUI's Локалка tab uses this so the user need not run `lan server`
+// separately; the headless runServer drives it too.
+func Serve(ctx context.Context, addr string) (ServerInfo, error) {
+	if addr == "" {
+		addr = defaultAddr
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return ServerInfo{}, err
+	}
+
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	info := ServerInfo{Port: port}
+	for _, ip := range localIPs() {
+		info.Addrs = append(info.Addrs, net.JoinHostPort(ip, port))
+	}
+
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				if ctx.Err() != nil {
+					return // listener closed via ctx — clean shutdown
+				}
+				// Unexpected failure: surface it instead of dying silently so a
+				// broken listener isn't mistaken for a graceful stop.
+				fmt.Fprintf(os.Stderr, "lan: приём соединения не удался: %v\n", err)
+				return
+			}
+			go serve(conn)
+		}
+	}()
+	return info, nil
+}
+
 func runServer(args []string) error {
 	fs := flag.NewFlagSet("lan server", flag.ContinueOnError)
 	addr := fs.String("addr", defaultAddr, "listen address")
@@ -185,27 +235,23 @@ func runServer(args []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", *addr)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	info, err := Serve(ctx, *addr)
 	if err != nil {
 		return err
 	}
-	defer ln.Close()
 
-	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	fmt.Printf("Сервер LAN-теста слушает порт %s\n", port)
+	fmt.Printf("Сервер LAN-теста слушает порт %s\n", info.Port)
 	fmt.Println("На другом устройстве запустите одну из команд:")
-	for _, ip := range localIPs() {
-		fmt.Printf("    speedtest lan client %s:%s\n", ip, port)
+	for _, a := range info.Addrs {
+		fmt.Printf("    speedtest lan client %s\n", a)
 	}
 	fmt.Println("Жду подключений... (Ctrl+C — остановить)")
 
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			return err
-		}
-		go serve(conn)
-	}
+	<-ctx.Done()
+	return nil
 }
 
 func serve(conn net.Conn) {
@@ -329,9 +375,9 @@ func transfer(host string, cmd byte, size int64) (time.Duration, error) {
 
 // measureLatency returns the median TCP connect RTT in ms over n attempts.
 func measureLatency(host string, n int) (float64, error) {
-	var best float64 = 1e9
+	best := 1e9
 	var ok bool
-	for i := 0; i < n; i++ {
+	for range n {
 		t0 := time.Now()
 		conn, err := net.DialTimeout("tcp", host, 2*time.Second)
 		if err != nil {
@@ -340,9 +386,7 @@ func measureLatency(host string, n int) (float64, error) {
 		rtt := time.Since(t0).Seconds() * 1000
 		conn.Close()
 		ok = true
-		if rtt < best {
-			best = rtt
-		}
+		best = min(best, rtt)
 	}
 	if !ok {
 		return 0, fmt.Errorf("no successful connection to %s", host)

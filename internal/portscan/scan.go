@@ -3,6 +3,7 @@
 package portscan
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -62,10 +63,22 @@ func scanHost(host string, ports []int, timeout time.Duration, workers int) []in
 	return open
 }
 
+// ScanOpenPorts scans the ports named by spec (e.g. "22,80,443" or "1-1024")
+// on host and returns the open ports, sorted ascending. It is the exported entry
+// point other packages (e.g. monitor) use to reuse the scan engine.
+func ScanOpenPorts(host, spec string, timeout time.Duration, workers int) ([]int, error) {
+	ports, err := parsePorts(spec)
+	if err != nil {
+		return nil, err
+	}
+	return scanHost(host, ports, timeout, workers), nil
+}
+
 // PortInfo is one open port and its guessed service.
 type PortInfo struct {
 	Port    int    `json:"port"`
 	Service string `json:"service,omitempty"`
+	Banner  string `json:"banner,omitempty"`
 }
 
 // ScanResult is the outcome of scanning a single host.
@@ -81,6 +94,7 @@ func RunScan(args []string) error {
 	portSpec := fs.String("ports", "1-1024", "ports to scan (e.g. 22,80,443 or 1-65535)")
 	timeout := fs.Duration("timeout", 500*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 500, "concurrent connections")
+	banner := fs.Bool("banner", false, "grab service banners from open ports")
 	asJSON := fs.Bool("json", false, "output result as JSON")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
@@ -108,6 +122,9 @@ func RunScan(args []string) error {
 		Hostname: reverseDNS(target, time.Second),
 		Open:     toPortInfos(open),
 	}
+	if *banner {
+		AddBanners(target, res.Open, *timeout)
+	}
 
 	if *asJSON {
 		return printJSON(res)
@@ -121,10 +138,12 @@ func RunScan(args []string) error {
 		fmt.Printf("Открытых портов не найдено на %s%s (%.1f с).\n", target, name, elapsed.Seconds())
 		return nil
 	}
-	fmt.Printf("\nХост: %s%s\n\nПОРТ     СТАТУС   СЕРВИС\n", target, name)
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintf(tw, "\nХост: %s%s\n\nПОРТ\tСТАТУС\tСЕРВИС\tБАННЕР\n", target, name)
 	for _, p := range res.Open {
-		fmt.Printf("%-8d открыт   %s\n", p.Port, p.Service)
+		fmt.Fprintf(tw, "%d\tоткрыт\t%s\t%s\n", p.Port, dash(p.Service), dash(p.Banner))
 	}
+	tw.Flush()
 	fmt.Printf("\nОткрытых портов: %d за %.1f с.\n", len(open), elapsed.Seconds())
 	return nil
 }
@@ -155,9 +174,24 @@ func RunDiscover(args []string) error {
 	timeout := fs.Duration("timeout", 400*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 1000, "global concurrent connections")
 	scanAll := fs.Bool("all", false, "scan every address, skip the liveness pre-check")
+	allSubnets := fs.Bool("all-subnets", false, "sweep every directly-attached subnet, not just one")
 	asJSON := fs.Bool("json", false, "output result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	var ports []int
+	if *portSpec != "" {
+		var err error
+		if ports, err = parsePorts(*portSpec); err != nil {
+			return err
+		}
+	} else {
+		ports = defaultDiscoverPorts
+	}
+
+	if *allSubnets {
+		return runDiscoverAll(ports, *timeout, *workers, *scanAll, *asJSON)
 	}
 
 	network := *cidr
@@ -174,13 +208,6 @@ func RunDiscover(args []string) error {
 
 	hosts, err := hostsInCIDR(network)
 	if err != nil {
-		return err
-	}
-
-	var ports []int
-	if *portSpec == "" {
-		ports = defaultDiscoverPorts
-	} else if ports, err = parsePorts(*portSpec); err != nil {
 		return err
 	}
 
@@ -245,6 +272,43 @@ func RunDiscover(args []string) error {
 
 	if *asJSON {
 		return printJSON(results)
+	}
+	printDiscoverTable(results)
+	return nil
+}
+
+// runDiscoverAll sweeps every directly-attached subnet via DiscoverLive and
+// prints the combined result. Progress is not streamed per host here; the
+// subnet list is announced up front so the scope is clear.
+func runDiscoverAll(ports []int, timeout time.Duration, workers int, scanAll, asJSON bool) error {
+	subnets := localSubnets()
+	if len(subnets) == 0 {
+		return fmt.Errorf("не найдено локальных подсетей для сканирования")
+	}
+	if !asJSON {
+		fmt.Printf("Подсети для сканирования (%d): %s\n\n", len(subnets), strings.Join(subnets, ", "))
+	}
+
+	results, err := DiscoverLive(context.Background(),
+		DiscoverOptions{AllSubnets: true, Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll},
+		nil, nil)
+	if err != nil {
+		return err
+	}
+	sort.Slice(results, func(i, j int) bool {
+		a, b := net.ParseIP(results[i].IP).To4(), net.ParseIP(results[j].IP).To4()
+		if a == nil || b == nil {
+			return results[i].IP < results[j].IP
+		}
+		return string(a) < string(b)
+	})
+
+	if asJSON {
+		return printJSON(results)
+	}
+	if len(results) == 0 {
+		fmt.Println("(живых хостов не найдено)")
+		return nil
 	}
 	printDiscoverTable(results)
 	return nil
