@@ -41,6 +41,8 @@ func Sample() ([]NICSample, error) {
 		return sampleWindows()
 	case "linux":
 		return sampleLinux()
+	case "darwin":
+		return sampleDarwin()
 	default:
 		return nil, ErrNoCounters
 	}

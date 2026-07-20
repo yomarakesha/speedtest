@@ -47,6 +47,63 @@ func parseNetAdapterCSV(text string) ([]NICSample, error) {
 	return out, nil
 }
 
+// --- macOS (netstat -ib) ---------------------------------------------------
+
+// sampleDarwin reads per-interface byte counters from `netstat -ib`. Only the
+// link-layer row (<Link#N>) is used per interface so per-address-family rows
+// don't double-count the same counters.
+func sampleDarwin() ([]NICSample, error) {
+	out, err := exec.Command("netstat", "-ibn").Output()
+	if err != nil {
+		return nil, ErrNoCounters
+	}
+	return parseNetstatIB(string(out)), nil
+}
+
+// parseNetstatIB parses `netstat -ib` output. Column count varies (the Address
+// field may be empty), so the byte counters are read from the end of each row,
+// which is stable: ... Ipkts Ierrs Ibytes Opkts Oerrs Obytes [Coll]. Ibytes is
+// the 4th-from-last of the six trailing numeric fields, Obytes the last.
+func parseNetstatIB(text string) []NICSample {
+	var out []NICSample
+	seen := make(map[string]bool)
+	for line := range strings.SplitSeq(strings.TrimSpace(text), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 9 || !strings.HasPrefix(f[2], "<Link") {
+			continue // header, per-address rows, or short lines
+		}
+		name := f[0]
+		if name == "lo0" || seen[name] {
+			continue
+		}
+		// The trailing run of numbers is Ipkts Ierrs Ibytes Opkts Oerrs Obytes
+		// [Coll] [Drop]. Index from the FRONT of the run so extra trailing columns
+		// (Coll/Drop) on some macOS versions don't shift the counters.
+		nums := trailingNumbers(f)
+		if len(nums) < 6 {
+			continue
+		}
+		out = append(out, NICSample{Name: name, Rx: nums[2], Tx: nums[5]})
+		seen[name] = true
+	}
+	return out
+}
+
+// trailingNumbers returns the contiguous run of parseable uint64 values at the
+// end of fields, in order. A non-numeric field (the Address/MAC column) resets
+// the run, so only the counter columns remain.
+func trailingNumbers(fields []string) []uint64 {
+	var nums []uint64
+	for _, s := range fields {
+		if v, err := strconv.ParseUint(s, 10, 64); err == nil {
+			nums = append(nums, v)
+		} else {
+			nums = nil // reset: only a contiguous trailing run counts
+		}
+	}
+	return nums
+}
+
 // --- Linux (/proc/net/dev) -------------------------------------------------
 
 func sampleLinux() ([]NICSample, error) {

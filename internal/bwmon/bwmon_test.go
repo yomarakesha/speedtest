@@ -79,6 +79,40 @@ func TestParseProcNetDev(t *testing.T) {
 	}
 }
 
+func TestParseNetstatIB(t *testing.T) {
+	// Real `netstat -ibn` shape: header, lo0 (skipped), en0 link row (has MAC),
+	// en0 per-address rows (skipped as duplicates), a row with a trailing Coll.
+	const out = `Name  Mtu   Network       Address            Ipkts Ierrs     Ibytes    Opkts Oerrs     Obytes  Coll
+lo0   16384 <Link#1>                       100     0      12345      100     0      12345     0
+en0   1500  <Link#4>    a4:83:e7:aa:bb:cc  5000     0    9000000     4000     0    3000000     0
+en0   1500  192.168.1     192.168.1.5      3000     -     600000     2500     -     400000     -
+en1   1500  <Link#5>    a4:83:e7:dd:ee:ff  10       0        512       8      0        256     0`
+	s := parseNetstatIB(out)
+	byName := map[string]NICSample{}
+	for _, x := range s {
+		byName[x.Name] = x
+	}
+	if _, ok := byName["lo0"]; ok {
+		t.Error("lo0 should be skipped")
+	}
+	if got := byName["en0"]; got.Rx != 9000000 || got.Tx != 3000000 {
+		t.Errorf("en0 = %+v, want Rx=9000000 Tx=3000000", got)
+	}
+	if got := byName["en1"]; got.Rx != 512 || got.Tx != 256 {
+		t.Errorf("en1 = %+v, want Rx=512 Tx=256", got)
+	}
+	// en0 appears twice (link + address rows) but must be counted once.
+	count := 0
+	for _, x := range s {
+		if x.Name == "en0" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("en0 counted %d times, want 1 (dedupe link row)", count)
+	}
+}
+
 func TestTotals(t *testing.T) {
 	rx, tx := Totals([]NICRate{{RxMbps: 1.5, TxMbps: 0.5}, {RxMbps: 2, TxMbps: 1}})
 	if rx != 3.5 || tx != 1.5 {
