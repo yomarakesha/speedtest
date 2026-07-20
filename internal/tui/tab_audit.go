@@ -67,8 +67,10 @@ func (t *auditTab) start() tea.Cmd {
 	t.ch = ch
 	go func() {
 		// Same orchestration and timeouts the CLI uses, so a host grades
-		// identically in both. Passive checks only — the intrusive/DNS checks
-		// need an authorization flag the TUI can't collect.
+		// identically in both. This probes common web ports to discover services
+		// and reads what they volunteer; the intrusive checks (default creds,
+		// unauth services, DNS/CVE) stay off — they need an authorization flag
+		// the TUI can't collect.
 		all := audit.RunChecks(host, audit.DefaultAuditOptions(),
 			func(f audit.Finding) { ch <- auditFindingMsg{f} }, nil)
 		report := audit.NewReport(host, all)

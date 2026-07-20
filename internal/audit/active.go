@@ -84,17 +84,17 @@ func ftpAnonymousFinding(addr string, timeout time.Duration) []Finding {
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(timeout))
 	r := bufio.NewReader(conn)
-	if _, err := r.ReadString('\n'); err != nil { // greeting
+	if _, err := readFTPReply(r); err != nil { // greeting (may be multi-line)
 		return nil
 	}
 	fmt.Fprint(conn, "USER anonymous\r\n")
-	r.ReadString('\n')
+	readFTPReply(r)
 	fmt.Fprint(conn, "PASS anonymous@example.com\r\n")
-	line, err := r.ReadString('\n')
+	line, err := readFTPReply(r)
 	if err != nil {
 		return nil
 	}
-	if strings.HasPrefix(strings.TrimSpace(line), "230") { // login successful
+	if strings.HasPrefix(line, "230") { // login successful
 		return []Finding{{
 			Check: "creds.ftp_anonymous", Severity: High,
 			Title:  "Разрешён анонимный вход по FTP",
@@ -104,16 +104,35 @@ func ftpAnonymousFinding(addr string, timeout time.Duration) []Finding {
 	return nil
 }
 
+// readFTPReply reads one full FTP reply, consuming continuation lines. A
+// multi-line reply ("NNN-first line" ... "NNN last line") ends only when a line
+// begins with a 3-digit code immediately followed by a space, so reading a
+// single line would desynchronize the exchange on banners/replies that span
+// several lines. It returns the final (status) line without its CRLF.
+func readFTPReply(r *bufio.Reader) (string, error) {
+	for {
+		raw, err := r.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line := strings.TrimRight(raw, "\r\n")
+		if len(line) >= 4 && isDigit(line[0]) && isDigit(line[1]) &&
+			isDigit(line[2]) && line[3] == ' ' {
+			return line, nil
+		}
+	}
+}
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
 // httpDefaultCredFinding tries factory credentials against an HTTP Basic-auth
-// endpoint on common web ports, reporting the first pair that authenticates.
+// endpoint on every discovered web service, reporting the first pair that
+// authenticates. Reusing discoverWebServices keeps this in step with the
+// passive layer instead of hardcoding a stale port list.
 func httpDefaultCredFinding(host string, timeout time.Duration) []Finding {
 	client := &http.Client{Timeout: timeout}
-	for _, port := range []int{80, 8080, 443} {
-		scheme := "http"
-		if port == 443 {
-			scheme = "https"
-		}
-		url := fmt.Sprintf("%s://%s:%d/", scheme, host, port)
+	for _, svc := range discoverWebServices(host, timeout) {
+		url := fmt.Sprintf("%s://%s:%d/", svc.scheme, host, svc.port)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			continue

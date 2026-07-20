@@ -63,10 +63,14 @@ func auditWebService(host string, s webService, timeout time.Duration) []Finding
 
 	hf, err := AuditHTTP(url, timeout)
 	if err != nil {
-		// Scheme guess was wrong (e.g. plain HTTP on a "tls" port, or TLS on a
-		// bare port). Retry the alternate scheme once.
-		url = fmt.Sprintf("%s://%s:%d", altScheme(s.scheme), host, s.port)
-		hf, err = AuditHTTP(url, timeout)
+		// Scheme guess may be wrong (e.g. plain HTTP on a "tls" port, or TLS on a
+		// bare port). Retry the alternate scheme, but only adopt it when it
+		// actually succeeds — otherwise keep the original scheme so the path/TLS
+		// checks below still run against the port's true nature.
+		alt := fmt.Sprintf("%s://%s:%d", altScheme(s.scheme), host, s.port)
+		if hf2, err2 := AuditHTTP(alt, timeout); err2 == nil {
+			url, hf, err = alt, hf2, nil
+		}
 	}
 
 	var out []Finding

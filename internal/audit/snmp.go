@@ -2,7 +2,6 @@ package audit
 
 import (
 	"net"
-	"slices"
 	"time"
 )
 
@@ -54,10 +53,53 @@ func snmpAnswers(addr, community string, timeout time.Duration) bool {
 	if err != nil {
 		return false
 	}
-	// A response is an SNMP message (SEQUENCE, tag 0x30) carrying a GetResponse
-	// PDU (tag 0xa2). Seeing both is a strong signal the community was accepted.
-	resp := buf[:n]
-	return len(resp) > 2 && resp[0] == 0x30 && slices.Contains(resp, 0xa2)
+	return snmpIsResponse(buf[:n], community)
+}
+
+// snmpIsResponse verifies resp is a well-formed SNMP message that echoes our
+// community and carries a GetResponse PDU (tag 0xa2). Walking the ASN.1
+// structure — rather than just scanning for byte 0xa2 anywhere — avoids false
+// positives from unrelated UDP payloads that happen to contain that byte.
+func snmpIsResponse(resp []byte, community string) bool {
+	seq, _, ok := readTLV(resp, 0x30) // outer SEQUENCE
+	if !ok {
+		return false
+	}
+	_, rest, ok := readTLV(seq, 0x02) // version INTEGER
+	if !ok {
+		return false
+	}
+	comm, rest, ok := readTLV(rest, 0x04) // community OCTET STRING
+	if !ok || string(comm) != community {
+		return false
+	}
+	return len(rest) > 0 && rest[0] == 0xa2 // GetResponse PDU tag
+}
+
+// readTLV parses one ASN.1 TLV at the start of b whose tag must equal tag,
+// handling both short- and long-form lengths. It returns the value bytes and
+// the bytes following this TLV.
+func readTLV(b []byte, tag byte) (val, rest []byte, ok bool) {
+	if len(b) < 2 || b[0] != tag {
+		return nil, nil, false
+	}
+	length := int(b[1])
+	i := 2
+	if length&0x80 != 0 { // long form: low 7 bits give the number of length bytes
+		nbytes := length & 0x7f
+		if nbytes == 0 || nbytes > 4 || len(b) < 2+nbytes {
+			return nil, nil, false
+		}
+		length = 0
+		for j := range nbytes {
+			length = length<<8 | int(b[2+j])
+		}
+		i = 2 + nbytes
+	}
+	if length < 0 || len(b) < i+length {
+		return nil, nil, false
+	}
+	return b[i : i+length], b[i+length:], true
 }
 
 // buildSNMPGet hand-encodes a minimal SNMPv1 GetRequest for sysDescr.0

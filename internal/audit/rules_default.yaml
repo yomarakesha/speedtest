@@ -163,14 +163,9 @@ rules:
     source: body
     regex: "\"kind\"\\s*:\\s*\"(Status|APIVersions)\""
 
-  - id: spring-heapdump
-    check: web.sensitive_path
-    severity: high
-    title: "Actuator отдаёт heapdump (утечка памяти процесса)"
-    source: header
-    header: "Content-Type"
-    contains: "application/octet-stream"
-    port: 8080
+  # (spring-heapdump moved to a path probe in webpaths.go: it must GET
+  # /actuator/heapdump and match the HPROF magic, not inspect the root
+  # Content-Type — a header rule on "/" never sees the heapdump endpoint.)
 
   - id: gitlab-exposed
     check: web.exposed_panel

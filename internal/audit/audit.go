@@ -1,8 +1,11 @@
-// Package audit provides passive security checks against a target host: TLS
-// configuration, certificate hygiene and (later) HTTP security headers. Every
-// check returns a slice of Finding; a Report bundles them with an overall
-// letter grade. Checks are read-only and non-intrusive — they open normal
-// connections and inspect what the server volunteers, nothing more.
+// Package audit provides security checks against a target host: TLS
+// configuration, certificate hygiene, HTTP security headers, risky ports and
+// more. Every check returns a slice of Finding; a Report bundles them with an
+// overall letter grade. The default checks are light-touch — they probe common
+// web ports to discover services and inspect what each server volunteers.
+// Genuinely intrusive checks (default-credential attempts, unauthenticated
+// service probing, DNS/CVE) are gated behind an explicit authorization flag
+// (AuditOptions.Active) and run only against the single named target.
 package audit
 
 import (

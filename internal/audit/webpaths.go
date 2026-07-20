@@ -35,6 +35,7 @@ var sensitivePaths = []pathProbe{
 	{path: "/server-status", sev: Medium, title: "Открыта страница mod_status Apache", needle: "Apache Server Status"},
 	{path: "/actuator/health", sev: Medium, title: "Открыт Spring Boot Actuator", needle: "status"},
 	{path: "/actuator/env", sev: High, title: "Actuator /env раскрывает конфигурацию и секреты"},
+	{path: "/actuator/heapdump", sev: High, title: "Actuator отдаёт heapdump (утечка памяти процесса)", needle: "JAVA PROFILE", rawFile: true},
 	{path: "/phpinfo.php", sev: Medium, title: "Доступна страница phpinfo()", needle: "phpinfo()"},
 	{path: "/.DS_Store", sev: Low, title: "Открыт файл .DS_Store (утечка структуры каталогов)", rawFile: true},
 	{path: "/backup.zip", sev: Medium, title: "Доступен архив резервной копии", rawFile: true},

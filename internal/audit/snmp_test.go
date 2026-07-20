@@ -35,6 +35,28 @@ func TestBuildSNMPGetCommunityLength(t *testing.T) {
 	}
 }
 
+// snmpIsResponse must accept a well-formed GetResponse that echoes the
+// community, and reject payloads that merely contain byte 0xa2 or a wrong
+// community — the false positives the old byte-scan check produced.
+func TestSNMPIsResponse(t *testing.T) {
+	// SEQUENCE { INTEGER 0, OCTET STRING "public", 0xa2 <getresponse> }
+	pdu := tlv(0xa2, []byte{0x02, 0x01, 0x00}) // minimal GetResponse body
+	body := concat([]byte{0x02, 0x01, 0x00}, tlv(0x04, []byte("public")), pdu)
+	good := tlv(0x30, body)
+	if !snmpIsResponse(good, "public") {
+		t.Error("valid GetResponse rejected")
+	}
+	// Right structure but the community doesn't match what we sent.
+	if snmpIsResponse(good, "private") {
+		t.Error("accepted a response echoing a different community")
+	}
+	// Starts with 0x30 and contains 0xa2, but is not a valid SNMP message.
+	junk := []byte{0x30, 0x05, 0xa2, 0x00, 0x11, 0x22, 0x33}
+	if snmpIsResponse(junk, "public") {
+		t.Error("accepted non-SNMP payload that merely contains 0xa2")
+	}
+}
+
 func containsSub(b, sub []byte) bool { return indexSub(b, sub) >= 0 }
 
 func indexSub(b, sub []byte) int {

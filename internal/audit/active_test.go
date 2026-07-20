@@ -5,9 +5,25 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+// readFTPReply must consume continuation lines and return only the final status
+// line, so a multi-line banner/reply can't desync the anonymous-login check.
+func TestReadFTPReply(t *testing.T) {
+	in := "220-Welcome to vsFTPd\r\n220-Rules apply\r\n220 Ready\r\n331 Password required\r\n"
+	r := bufio.NewReader(strings.NewReader(in))
+	first, err := readFTPReply(r)
+	if err != nil || first != "220 Ready" {
+		t.Fatalf("first reply = %q, %v; want \"220 Ready\"", first, err)
+	}
+	second, err := readFTPReply(r)
+	if err != nil || second != "331 Password required" {
+		t.Fatalf("second reply = %q, %v; want \"331 Password required\"", second, err)
+	}
+}
 
 func TestCVEForBanner(t *testing.T) {
 	fs := cveForBanner("SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13")
