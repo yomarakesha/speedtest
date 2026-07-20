@@ -26,6 +26,7 @@ const (
 	KindHTTPDL   Kind = "httpdl"
 	KindTrace    Kind = "trace"
 	KindAudit    Kind = "audit"
+	KindMonitor  Kind = "monitor"
 )
 
 // Record is one measurement result. Only the fields relevant to Kind are set;
@@ -40,6 +41,7 @@ type Record struct {
 	LossPct      float64   `json:"loss_pct,omitempty"`
 	Grade        string    `json:"grade,omitempty"`    // audit: overall A–F grade
 	Findings     int       `json:"findings,omitempty"` // audit: number of findings
+	Note         string    `json:"note,omitempty"`     // monitor: free-text alert summary
 }
 
 // Path returns the JSONL file location, creating the parent directory.
@@ -124,7 +126,7 @@ func ExportCSV(w io.Writer, recs []Record) error {
 	defer cw.Flush()
 	if err := cw.Write([]string{
 		"time", "kind", "target", "download_mbps", "upload_mbps", "ping_ms", "loss_pct",
-		"grade", "findings",
+		"grade", "findings", "note",
 	}); err != nil {
 		return err
 	}
@@ -143,6 +145,7 @@ func ExportCSV(w io.Writer, recs []Record) error {
 			f2(r.LossPct),
 			r.Grade,
 			findings,
+			r.Note,
 		}
 		if err := cw.Write(row); err != nil {
 			return err
@@ -214,6 +217,11 @@ func summarize(r Record) string {
 		return fmt.Sprintf("%s  потери %.0f%%", r.Target, r.LossPct)
 	case KindAudit:
 		return fmt.Sprintf("%s  оценка %s  находок %d", r.Target, r.Grade, r.Findings)
+	case KindMonitor:
+		if r.Note != "" {
+			return fmt.Sprintf("%s  %s", r.Target, r.Note)
+		}
+		return r.Target
 	}
 	return r.Target
 }

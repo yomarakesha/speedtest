@@ -63,6 +63,17 @@ func scanHost(host string, ports []int, timeout time.Duration, workers int) []in
 	return open
 }
 
+// ScanOpenPorts scans the ports named by spec (e.g. "22,80,443" or "1-1024")
+// on host and returns the open ports, sorted ascending. It is the exported entry
+// point other packages (e.g. monitor) use to reuse the scan engine.
+func ScanOpenPorts(host, spec string, timeout time.Duration, workers int) ([]int, error) {
+	ports, err := parsePorts(spec)
+	if err != nil {
+		return nil, err
+	}
+	return scanHost(host, ports, timeout, workers), nil
+}
+
 // PortInfo is one open port and its guessed service.
 type PortInfo struct {
 	Port    int    `json:"port"`

@@ -15,6 +15,7 @@ import (
 	"speedtest/internal/history"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
+	"speedtest/internal/monitor"
 	"speedtest/internal/ping"
 	"speedtest/internal/portscan"
 	"speedtest/internal/speedtest"
@@ -77,6 +78,19 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Требует сборки с -tags pcap и установленного Npcap (Windows) / libpcap.
         В коммутируемой сети виден в основном свой трафик + широковещание;
         для полной картины нужен SPAN-порт или режим монитора Wi-Fi.
+
+  speedtest monitor init [--config monitor.yaml]
+        Создать пример конфига мониторинга (проверки + получатели алертов).
+
+  speedtest monitor check [--config monitor.yaml]
+        Один проход всех проверок из конфига; алерты в stdout/webhook/
+        десктоп/историю. Ненулевой код возврата при нарушении порога
+        (удобно для cron/CI).
+
+  speedtest monitor run [--config monitor.yaml]
+        Непрерывный мониторинг: каждая проверка (ping/portdrift/auditgrade/
+        bandwidth) опрашивается по своему интервалу; алерт при превышении
+        порога, изменении набора портов или падении оценки. Ctrl-C — стоп.
 
   speedtest audit <host> [--timeout 8s] [--json] [--export html] [--dns]
         Полный аудит хоста: находит ВСЕ веб-сервисы (80/443/3000/8000/8080/
@@ -143,6 +157,8 @@ func main() {
 		err = bwmon.RunBWMon(args)
 	case "sniff":
 		err = capture.RunSniff(args)
+	case "monitor":
+		err = monitor.RunMonitor(args)
 	case "audit":
 		err = audit.RunAudit(args)
 	case "tlsaudit":
