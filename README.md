@@ -18,6 +18,10 @@ also available as a scriptable subcommand. The interface is in Russian.
 | **Скан** / `scan` | TCP port scan of a single host with a live progress bar; optional `--banner` service detection. |
 | **Обзор** / `discover` | Sweep the local subnet: live hosts, open ports, hostname, MAC, vendor. |
 | **Аудит** / `audit` | Security audit of a host: TLS/certificate, HTTP security headers, exposed risky ports → A–F grade. |
+| **Wi-Fi** / `wifi` | Wi-Fi survey: current SSID/signal/channel, nearby networks, least-congested 2.4 GHz channel advice. |
+| **Полоса** / `bwmon` | This machine's live per-interface throughput (rx/tx) from OS byte counters. |
+| **Снифер** / `sniff` | Passive top-talkers by traffic volume (needs a `pcap` build + Npcap/libpcap). |
+| **Монитор** / `monitor` | Continuous checks (ping/port-drift/audit-grade/bandwidth) with alerts on breach → stdout/webhook/desktop/history. |
 | **История** / `history` | Every run is saved automatically; trend sparkline + CSV/JSON export. |
 
 ## The TUI dashboard
@@ -133,6 +137,66 @@ speedtest audit 192.168.1.10 --i-have-authorization      # active checks
   anonymous FTP, and CVE matching against grabbed banners. These send commands
   and try logins — **only run them against systems you are authorized to test.**
   The CVE table is a small illustrative set; treat hits as leads to verify.
+
+### Wi-Fi survey
+```sh
+speedtest wifi
+speedtest wifi --json
+```
+Shows the current connection (SSID, signal, channel), nearby networks, and which
+2.4 GHz channel is least congested. Per-client traffic is **not** shown — that
+needs the adapter in monitor mode.
+
+### Bandwidth monitor (this host)
+```sh
+speedtest bwmon --interval 2s
+speedtest bwmon --count 5 --json
+```
+Live receive/transmit throughput per interface, from OS counters
+(`Get-NetAdapterStatistics` on Windows, `/proc/net/dev` on Linux, `netstat -ib`
+on macOS). It measures **this machine only** — seeing other devices' traffic
+needs the router's cooperation or a capture vantage.
+
+### Passive top-talkers (pcap)
+```sh
+go build -tags pcap -o speedtest .        # requires Npcap (Windows) / libpcap
+speedtest sniff --top 15 --resolve
+speedtest sniff --iface "Wi-Fi" --json
+```
+Ranks who is "talking" most by captured traffic volume. On a switched network you
+mostly see your own traffic plus broadcast; a full picture needs a SPAN port or
+Wi-Fi monitor mode. Without the `pcap` build tag the command is unavailable.
+
+### Continuous monitoring & alerts
+```sh
+speedtest monitor init                    # write a sample monitor.yaml
+speedtest monitor check                   # one pass; non-zero exit on any breach
+speedtest monitor run                      # loop, each check on its own interval
+```
+Turns the one-shot probes into continuous checks that alert on threshold breach
+or drift. `check` is built for cron/CI (its exit code reflects breaches); `run`
+is a long-lived daemon. Both read the same YAML and share the alert sinks.
+
+Checks: **ping** (latency/loss), **portdrift** (a port opened or closed vs. the
+last baseline), **auditgrade** (security grade dropped below a minimum or new
+findings appeared), **bandwidth** (rx/tx over a threshold). Sinks: **stdout**
+(+exit code), **webhook** (POST JSON with a `text` field, so Slack/Discord
+incoming webhooks render it), **desktop** (native OS toast), **history** (breaches
+saved alongside measurements).
+
+```yaml
+# monitor.yaml
+checks:
+  - {type: ping,       target: 1.1.1.1,     interval: 10s, max_latency: 80ms, max_loss: 5}
+  - {type: portdrift,  target: 192.168.1.1, interval: 5m,  ports: 1-1024}
+  - {type: auditgrade, target: example.com, interval: 1h,  min_grade: B}
+  - {type: bandwidth,  iface: "",           interval: 2s,  max_mbps: 900}
+sinks:
+  stdout: true
+  webhook: ""            # e.g. https://hooks.slack.com/services/...
+  desktop: false
+  history: true
+```
 
 ### History & export
 ```sh
