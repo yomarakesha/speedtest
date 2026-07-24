@@ -169,12 +169,15 @@ type HostResult struct {
 // RunDiscover is the CLI entry point for `speedtest discover`.
 func RunDiscover(args []string) error {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
-	cidr := fs.String("cidr", "", "subnet to sweep (default: auto-detected local /24)")
+	cidr := fs.String("cidr", "", "subnet(s) to sweep, comma-separated (default: auto-detected local /24)")
 	portSpec := fs.String("ports", "", "ports per host (default: common services)")
 	timeout := fs.Duration("timeout", 400*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 1000, "global concurrent connections")
 	scanAll := fs.Bool("all", false, "scan every address, skip the liveness pre-check")
 	allSubnets := fs.Bool("all-subnets", false, "sweep every directly-attached subnet, not just one")
+	expand := fs.Bool("expand", false, "auto-discover subnets (traceroute + SNMP) and scan them recursively")
+	expandDepth := fs.Int("expand-depth", 2, "how many hops of subnets to follow with --expand")
+	community := fs.String("snmp-community", "", "SNMP community for --expand route discovery (e.g. public)")
 	asJSON := fs.Bool("json", false, "output result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -190,11 +193,24 @@ func RunDiscover(args []string) error {
 		ports = defaultDiscoverPorts
 	}
 
+	if *expand {
+		return runDiscoverExpand(SplitCIDRs(*cidr), ports, *timeout, *workers, *expandDepth, *community, *scanAll, *asJSON)
+	}
+
 	if *allSubnets {
 		return runDiscoverAll(ports, *timeout, *workers, *scanAll, *asJSON)
 	}
 
-	network := *cidr
+	// An explicit --cidr may name several subnets; sweep them all via DiscoverLive.
+	cidrs := SplitCIDRs(*cidr)
+	if len(cidrs) > 1 {
+		return runDiscoverCIDRs(cidrs, ports, *timeout, *workers, *scanAll, *asJSON)
+	}
+
+	network := ""
+	if len(cidrs) == 1 {
+		network = cidrs[0]
+	}
 	if network == "" {
 		auto, err := localCIDR()
 		if err != nil {
@@ -295,13 +311,7 @@ func runDiscoverAll(ports []int, timeout time.Duration, workers int, scanAll, as
 	if err != nil {
 		return err
 	}
-	sort.Slice(results, func(i, j int) bool {
-		a, b := net.ParseIP(results[i].IP).To4(), net.ParseIP(results[j].IP).To4()
-		if a == nil || b == nil {
-			return results[i].IP < results[j].IP
-		}
-		return string(a) < string(b)
-	})
+	sortResultsByIP(results)
 
 	if asJSON {
 		return printJSON(results)
@@ -312,6 +322,83 @@ func runDiscoverAll(ports []int, timeout time.Duration, workers int, scanAll, as
 	}
 	printDiscoverTable(results)
 	return nil
+}
+
+// runDiscoverCIDRs sweeps an explicit list of subnets via DiscoverLive and
+// prints the combined result. Unreachable/unscannable subnets are skipped; the
+// scope is announced up front.
+func runDiscoverCIDRs(cidrs []string, ports []int, timeout time.Duration, workers int, scanAll, asJSON bool) error {
+	if !asJSON {
+		fmt.Printf("Подсети для сканирования (%d): %s\n\n", len(cidrs), strings.Join(cidrs, ", "))
+	}
+
+	results, err := DiscoverLive(context.Background(),
+		DiscoverOptions{CIDRs: cidrs, Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll},
+		nil, nil)
+	if err != nil {
+		return err
+	}
+	sortResultsByIP(results)
+
+	if asJSON {
+		return printJSON(results)
+	}
+	if len(results) == 0 {
+		fmt.Println("(живых хостов не найдено)")
+		return nil
+	}
+	printDiscoverTable(results)
+	return nil
+}
+
+// runDiscoverExpand auto-discovers subnets (traceroute + optional SNMP) starting
+// from seeds (or the local subnets when empty) and scans everything it finds.
+func runDiscoverExpand(seeds []string, ports []int, timeout time.Duration, workers, depth int, community string, scanAll, asJSON bool) error {
+	if !asJSON {
+		start := "локальные подсети"
+		if len(seeds) > 0 {
+			start = strings.Join(seeds, ", ")
+		}
+		snmp := "выкл (задайте --snmp-community)"
+		if community != "" {
+			snmp = "вкл (community: " + community + ")"
+		}
+		fmt.Printf("Авто-обнаружение подсетей от: %s\n  глубина: %d, SNMP: %s\n\n", start, depth, snmp)
+	}
+
+	res, err := ExpandDiscover(context.Background(),
+		ExpandOptions{Seeds: seeds, MaxDepth: depth, Community: community,
+			Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll},
+		func(cidr, source string) {
+			if !asJSON {
+				fmt.Printf("  + подсеть %-20s (%s)\n", cidr, source)
+			}
+		}, nil)
+	if err != nil && len(res.Hosts) == 0 {
+		return err
+	}
+
+	if asJSON {
+		return printJSON(res.Hosts)
+	}
+	fmt.Printf("\nОбнаружено подсетей: %d.\n\n", len(res.Subnets))
+	if len(res.Hosts) == 0 {
+		fmt.Println("(живых хостов не найдено)")
+		return nil
+	}
+	printDiscoverTable(res.Hosts)
+	return nil
+}
+
+// sortResultsByIP orders results numerically by IPv4 address (lexical fallback).
+func sortResultsByIP(results []HostResult) {
+	sort.Slice(results, func(i, j int) bool {
+		a, b := net.ParseIP(results[i].IP).To4(), net.ParseIP(results[j].IP).To4()
+		if a == nil || b == nil {
+			return results[i].IP < results[j].IP
+		}
+		return string(a) < string(b)
+	})
 }
 
 // enrich fills in Hostname, MAC and Vendor for each result.

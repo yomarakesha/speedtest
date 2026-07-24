@@ -67,6 +67,24 @@ func preferredSourceIP() (net.IP, error) {
 	return ip, nil
 }
 
+// SplitCIDRs parses a comma/space/tab-separated list of CIDRs into a trimmed,
+// order-preserving, deduplicated slice. Empty entries are dropped. Lets a UI or
+// CLI accept several subnets in one field, e.g. "192.168.20.0/24, 10.0.0.0/24".
+func SplitCIDRs(s string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t'
+	}) {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
 // hostsInCIDR returns every usable host address in a CIDR block. For blocks
 // larger than /16 it returns an error to avoid runaway scans.
 func hostsInCIDR(cidr string) ([]string, error) {
@@ -254,4 +272,39 @@ func incIP(ip net.IP) {
 			break
 		}
 	}
+}
+
+func decIP(ip net.IP) {
+	for i := len(ip) - 1; i >= 0; i-- {
+		ip[i]--
+		if ip[i] != 0xff {
+			break
+		}
+	}
+}
+
+// routerGuesses returns the two addresses most likely to be the gateway of a
+// subnet: the first host (network+1, e.g. .1) and the last host (broadcast-1,
+// e.g. .254). Used as SNMP probe targets during --expand. Returns nil for
+// prefixes too small to hold hosts.
+func routerGuesses(cidr string) []string {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil
+	}
+	base := ipnet.IP.Mask(ipnet.Mask).To4()
+	if base == nil {
+		return nil
+	}
+	if ones, bits := ipnet.Mask.Size(); bits-ones < 2 {
+		return nil
+	}
+	first := cloneIP(base)
+	incIP(first)
+	last := cloneIP(base)
+	for i := range last {
+		last[i] |= ^ipnet.Mask[i]
+	}
+	decIP(last) // broadcast-1
+	return []string{first.String(), last.String()}
 }

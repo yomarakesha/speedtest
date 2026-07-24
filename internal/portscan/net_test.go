@@ -47,6 +47,26 @@ func TestUsefulSubnet(t *testing.T) {
 	}
 }
 
+func TestSplitCIDRs(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"192.168.1.0/24", []string{"192.168.1.0/24"}},
+		{"192.168.20.0/24,10.0.0.0/24", []string{"192.168.20.0/24", "10.0.0.0/24"}},
+		{" 192.168.20.0/24 , 10.0.0.0/24 ", []string{"192.168.20.0/24", "10.0.0.0/24"}},
+		{"10.0.0.0/24 172.16.0.0/16", []string{"10.0.0.0/24", "172.16.0.0/16"}}, // space-separated
+		{"10.0.0.0/24,10.0.0.0/24", []string{"10.0.0.0/24"}},                    // dedup
+		{",,10.0.0.0/24,,", []string{"10.0.0.0/24"}},                            // empty entries dropped
+	}
+	for _, c := range cases {
+		if got := SplitCIDRs(c.in); !slices.Equal(got, c.want) {
+			t.Errorf("SplitCIDRs(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 func TestParseRoutesWindows(t *testing.T) {
 	// Trimmed `route print -4` output.
 	out := `

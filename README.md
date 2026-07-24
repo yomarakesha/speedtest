@@ -95,9 +95,31 @@ speedtest scan 192.168.1.1 --ports 1-65535 --workers 1000
 speedtest scan 192.168.1.1 --ports 22,80,443 --banner   # grab service banners
 speedtest discover                       # auto-detect local /24
 speedtest discover --cidr 10.0.0.0/24 --ports 22,80,443,3389 --json
+speedtest discover --cidr 192.168.20.0/24,192.168.100.0/24   # several subnets at once
+speedtest discover --all-subnets         # every attached subnet (interfaces + routes)
+speedtest discover --expand              # auto-find subnets (traceroute) and scan them
+speedtest discover --cidr 192.168.100.0/24 --expand --snmp-community public
 ```
 Discovery does a fast liveness pre-check, then deep-scans only live hosts and
 annotates each with reverse-DNS name, MAC and vendor (system ARP table + OUI).
+`--cidr` accepts a comma-separated list.
+
+**Auto-discovering subnets you don't know about** — `--all-subnets` only sees
+subnets in this machine's routing table. `--expand` goes further: it traceroutes
+to live hosts to reveal transit routers (each hop hints at a subnet) and, when
+`--snmp-community` is given, walks each gateway's interface table over SNMP to
+learn every subnet that router bridges. New subnets are scanned recursively up to
+`--expand-depth` (default 2). Everything is read-only; unreachable gateways and
+closed SNMP agents simply contribute nothing.
+
+**In the TUI**, the **Обзор** tab is a plain menu — pick a scope with ↑/↓ and
+press Enter:
+
+- **Моя сеть** — the subnet this computer is on.
+- **Все мои сети** — every attached subnet (interfaces + routes).
+- **Выбрать сети вручную** — type a comma-separated CIDR list.
+- **Найти все сети** — the `--expand` sweep; optional fields for seed subnets, an
+  SNMP community (for the full router-table map) and search depth.
 `scan --banner` reads the greeting each open port volunteers (SSH/FTP/SMTP) or
 the HTTP `Server` header, revealing the running software and version.
 

@@ -75,8 +75,9 @@ func ScanLive(ctx context.Context, opt ScanOptions, onProgress func(done, total 
 
 // DiscoverOptions configures a streaming subnet discovery.
 type DiscoverOptions struct {
-	CIDR       string // empty => auto-detected local /24
-	Ports      []int  // empty => defaultDiscoverPorts
+	CIDR       string   // single subnet; empty => auto-detected local /24
+	CIDRs      []string // explicit list of subnets (takes priority over CIDR)
+	Ports      []int    // empty => defaultDiscoverPorts
 	Timeout    time.Duration
 	Workers    int
 	ScanAll    bool // skip the liveness pre-check
@@ -97,12 +98,15 @@ const (
 // nil). It returns the enriched results. Used by the TUI and CLI.
 func DiscoverLive(ctx context.Context, opt DiscoverOptions, onPhase func(p DiscoverPhase, done, total int), onHost func(HostResult)) ([]HostResult, error) {
 	var subnets []string
-	if opt.AllSubnets {
+	switch {
+	case opt.AllSubnets:
 		subnets = localSubnets()
 		if len(subnets) == 0 {
 			return nil, errNoSubnets
 		}
-	} else {
+	case len(opt.CIDRs) > 0:
+		subnets = opt.CIDRs
+	default:
 		network := opt.CIDR
 		if network == "" {
 			auto, err := localCIDR()
