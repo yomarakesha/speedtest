@@ -15,10 +15,13 @@ var errNoSubnets = errors.New("не найдено локальных подсе
 
 // ScanOptions configures a single-host streaming scan.
 type ScanOptions struct {
-	Host    string
-	Ports   []int
-	Timeout time.Duration
-	Workers int
+	Host        string
+	Ports       []int
+	Timeout     time.Duration
+	Workers     int
+	Subdomains  bool  // after the scan, search the zone for other names
+	Fingerprint bool  // fingerprint open web ports (title/Server/tech)
+	UDPPorts    []int // when non-empty, also probe these UDP ports
 }
 
 // ScanLive scans one host, invoking onProgress after each port completes and
@@ -28,6 +31,13 @@ func ScanLive(ctx context.Context, opt ScanOptions, onProgress func(done, total 
 	workers := opt.Workers
 	if workers < 1 {
 		workers = 1
+	}
+	host, err := ResolveTarget(ctx, opt.Host, resolveTimeout)
+	if err != nil {
+		if onProgress != nil {
+			onProgress(len(opt.Ports), len(opt.Ports))
+		}
+		return ScanResult{Host: opt.Host, Error: err.Error()}
 	}
 	total := len(opt.Ports)
 	jobs := make(chan int)
@@ -41,7 +51,7 @@ func ScanLive(ctx context.Context, opt ScanOptions, onProgress func(done, total 
 		go func() {
 			defer wg.Done()
 			for p := range jobs {
-				if ctx.Err() == nil && scanPort(opt.Host, p, opt.Timeout) {
+				if ctx.Err() == nil && scanPort(host, p, opt.Timeout) {
 					mu.Lock()
 					open = append(open, p)
 					mu.Unlock()
@@ -66,11 +76,25 @@ func ScanLive(ctx context.Context, opt ScanOptions, onProgress func(done, total 
 	wg.Wait()
 
 	sort.Ints(open)
-	return ScanResult{
-		Host:     opt.Host,
-		Hostname: reverseDNS(opt.Host, time.Second),
+	res := ScanResult{
+		Host:     host,
+		Hostname: hostnameFor(opt.Host, host),
 		Open:     toPortInfos(open),
+		Warning:  loopbackWarning(opt.Host, host),
 	}
+	if opt.Fingerprint && len(open) > 0 && ctx.Err() == nil {
+		res.Web = FingerprintWeb(ctx, host, opt.Host, open, 4*time.Second)
+	}
+	if len(opt.UDPPorts) > 0 && ctx.Err() == nil {
+		res.UDP = ScanUDP(ctx, host, opt.UDPPorts, udpTimeout(opt.Timeout), opt.Workers)
+	}
+	if opt.Subdomains && host != opt.Host && len(open) > 0 && ctx.Err() == nil {
+		sub := EnumSubdomains(ctx, SubdomainOptions{
+			Domain: opt.Host, Addr: host, Ports: open, Timeout: 2 * time.Second, Workers: 100,
+		})
+		res.Subdomains = &sub
+	}
+	return res
 }
 
 // DiscoverOptions configures a streaming subnet discovery.

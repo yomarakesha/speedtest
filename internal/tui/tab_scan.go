@@ -33,6 +33,11 @@ type scanTab struct {
 	total   int
 	open    []portscan.PortInfo
 	host    string
+	addr    string // address the name resolved to, once the scan finishes
+	warning string
+	failure string
+	web     []portscan.WebInfo
+	subs    *portscan.SubdomainResult
 	portIdx int // index into scanPresets
 }
 
@@ -80,13 +85,15 @@ func (t *scanTab) start() tea.Cmd {
 	t.running, t.done = true, false
 	t.scanned, t.total = 0, len(ports)
 	t.open = nil
+	t.addr, t.warning, t.failure, t.subs, t.web = "", "", "", nil, nil
 	t.input.Blur()
 
 	ch := make(chan tea.Msg, 256)
 	t.ch = ch
 	go func() {
 		res := portscan.ScanLive(context.Background(),
-			portscan.ScanOptions{Host: host, Ports: ports, Timeout: scanTimeout, Workers: scanWorkers},
+			portscan.ScanOptions{Host: host, Ports: ports, Timeout: scanTimeout,
+				Workers: scanWorkers, Subdomains: true, Fingerprint: true},
 			func(done, total int) { ch <- scanProgressMsg{done, total} },
 			func(p portscan.PortInfo) { ch <- scanOpenMsg{p} })
 		ch <- scanDoneMsg{res}
@@ -117,6 +124,12 @@ func (t *scanTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 	case scanDoneMsg:
 		t.running, t.done = false, true
 		t.open = msg.res.Open
+		t.warning, t.failure = msg.res.Warning, msg.res.Error
+		t.subs = msg.res.Subdomains
+		t.web = msg.res.Web
+		if msg.res.Host != t.host {
+			t.addr = msg.res.Host
+		}
 		t.input.Focus()
 		return t, nil
 	}
@@ -146,7 +159,19 @@ func (t *scanTab) View() string {
 		}
 		fmt.Fprintf(&b, "%s  %s %d/%d\n", state,
 			bar(frac, bw, t.sty.accent, t.sty.muted), t.scanned, t.total)
-		b.WriteString(t.openList())
+		if t.failure != "" {
+			fmt.Fprintln(&b, t.sty.bad.Render(t.failure))
+		} else {
+			if t.addr != "" {
+				fmt.Fprintln(&b, t.sty.muted.Render("адрес: "+t.addr))
+			}
+			if t.warning != "" {
+				fmt.Fprintln(&b, t.sty.warn.Render(t.warning))
+			}
+			b.WriteString(t.openList())
+			b.WriteString(t.webList())
+			b.WriteString(t.subList())
+		}
 	} else if hint := hostHint(t.sty, t.input.Value()); hint != "" {
 		b.WriteString(hint)
 	} else {
@@ -155,6 +180,60 @@ func (t *scanTab) View() string {
 
 	return lipgloss.Place(t.w, t.h, lipgloss.Left, lipgloss.Top,
 		t.sty.frame("Скан портов", t.w, t.h, b.String()))
+}
+
+// webList renders the fingerprint of each open web port: status, server, and
+// the technologies detected.
+func (t *scanTab) webList() string {
+	if len(t.web) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(t.sty.big.Render("Веб-сервисы:"))
+	b.WriteString("\n")
+	for _, w := range t.web {
+		head := fmt.Sprintf("%d/%s  %d", w.Port, w.Scheme, w.Status)
+		if w.Server != "" {
+			head += "  " + w.Server
+		}
+		if len(w.Tech) > 0 {
+			head += "  [" + strings.Join(w.Tech, ", ") + "]"
+		}
+		fmt.Fprintf(&b, "  %s\n", t.sty.good.Render(head))
+		if w.Title != "" {
+			fmt.Fprintf(&b, "    %s\n", t.sty.muted.Render(w.Title))
+		}
+		if w.Redirect != "" {
+			fmt.Fprintf(&b, "    %s\n", t.sty.muted.Render("-> "+w.Redirect))
+		}
+	}
+	return b.String()
+}
+
+// subList renders the subdomains found under the scanned zone. The panel is
+// short, so only the first few are listed and the rest are counted.
+func (t *scanTab) subList() string {
+	if t.subs == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	if len(t.subs.Found) == 0 {
+		return b.String() + t.sty.muted.Render("Субдоменов "+t.subs.Base+" не найдено.") + "\n"
+	}
+	b.WriteString(t.sty.big.Render(fmt.Sprintf("Субдомены %s (%d):", t.subs.Base, len(t.subs.Found))))
+	b.WriteString("\n")
+	const shown = 8
+	for i, s := range t.subs.Found {
+		if i == shown {
+			fmt.Fprintf(&b, "  %s\n", t.sty.muted.Render(fmt.Sprintf("... ещё %d", len(t.subs.Found)-shown)))
+			break
+		}
+		fmt.Fprintf(&b, "  %s  %s\n", t.sty.good.Render(s.Name),
+			t.sty.muted.Render(strings.Join(s.Addrs, ", ")))
+	}
+	return b.String()
 }
 
 func (t *scanTab) openList() string {

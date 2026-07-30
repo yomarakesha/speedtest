@@ -1,9 +1,66 @@
 package portscan
 
 import (
+	"context"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
+
+func TestResolveTargetPassesThroughIPLiterals(t *testing.T) {
+	for _, ip := range []string{"192.168.1.1", "8.8.8.8", "::1"} {
+		got, err := ResolveTarget(context.Background(), ip, time.Second)
+		if err != nil || got != ip {
+			t.Errorf("ResolveTarget(%q) = %q, %v; want %q, nil", ip, got, err, ip)
+		}
+	}
+}
+
+func TestResolveTargetResolvesLocalhostToIPv4(t *testing.T) {
+	got, err := ResolveTarget(context.Background(), "localhost", 5*time.Second)
+	if err != nil {
+		t.Fatalf("ResolveTarget(localhost): %v", err)
+	}
+	if got != "127.0.0.1" {
+		t.Errorf("ResolveTarget(localhost) = %q, want 127.0.0.1", got)
+	}
+}
+
+func TestResolveTargetReportsUnresolvableName(t *testing.T) {
+	_, err := ResolveTarget(context.Background(), "no-such-host.invalid", 5*time.Second)
+	if err == nil {
+		t.Fatal("ResolveTarget on an unresolvable name returned no error")
+	}
+}
+
+func TestDescribeTarget(t *testing.T) {
+	if got := describeTarget("8.8.8.8", "8.8.8.8"); got != "8.8.8.8" {
+		t.Errorf("describeTarget(ip, ip) = %q, want the bare IP", got)
+	}
+	if got := describeTarget("example.com", "93.184.216.34"); got != "example.com (93.184.216.34)" {
+		t.Errorf("describeTarget(name, ip) = %q, want \"example.com (93.184.216.34)\"", got)
+	}
+}
+
+func TestLoopbackWarning(t *testing.T) {
+	if got := loopbackWarning("example.com", "93.184.216.34"); got != "" {
+		t.Errorf("loopbackWarning on a routable address = %q, want empty", got)
+	}
+	if got := loopbackWarning("127.0.0.1", "127.0.0.1"); got != "" {
+		t.Errorf("loopbackWarning on a deliberate localhost scan = %q, want empty", got)
+	}
+	got := loopbackWarning("example.com", "127.0.0.1")
+	if !strings.Contains(got, "example.com") || !strings.Contains(got, "127.0.0.1") {
+		t.Errorf("loopbackWarning on a hijacked name = %q, want it to name both the host and the address", got)
+	}
+}
+
+func TestHostnameForKeepsTheNameTheCallerGave(t *testing.T) {
+	if got := hostnameFor("example.com", "93.184.216.34"); got != "example.com" {
+		t.Errorf("hostnameFor(name, ip) = %q, want the name", got)
+	}
+}
 
 func TestRouteToCIDR(t *testing.T) {
 	cases := []struct {

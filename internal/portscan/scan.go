@@ -64,15 +64,23 @@ func scanHost(host string, ports []int, timeout time.Duration, workers int) []in
 }
 
 // ScanOpenPorts scans the ports named by spec (e.g. "22,80,443" or "1-1024")
-// on host and returns the open ports, sorted ascending. It is the exported entry
-// point other packages (e.g. monitor) use to reuse the scan engine.
+// on host and returns the open ports, sorted ascending. host may be a name or an
+// IP; a name is resolved once before scanning. It is the exported entry point
+// other packages (e.g. monitor) use to reuse the scan engine.
 func ScanOpenPorts(host, spec string, timeout time.Duration, workers int) ([]int, error) {
 	ports, err := parsePorts(spec)
 	if err != nil {
 		return nil, err
 	}
-	return scanHost(host, ports, timeout, workers), nil
+	ip, err := ResolveTarget(context.Background(), host, resolveTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return scanHost(ip, ports, timeout, workers), nil
 }
+
+// resolveTimeout bounds the one up-front DNS lookup a scan performs.
+const resolveTimeout = 5 * time.Second
 
 // PortInfo is one open port and its guessed service.
 type PortInfo struct {
@@ -81,11 +89,20 @@ type PortInfo struct {
 	Banner  string `json:"banner,omitempty"`
 }
 
-// ScanResult is the outcome of scanning a single host.
+// ScanResult is the outcome of scanning a single host. Host is the address that
+// was actually scanned; Hostname is the name it was reached by (or a reverse
+// lookup). Warning carries a non-fatal caveat about the result, Error the reason
+// no scan happened at all.
 type ScanResult struct {
 	Host     string     `json:"host"`
 	Hostname string     `json:"hostname,omitempty"`
 	Open     []PortInfo `json:"open"`
+	Warning  string     `json:"warning,omitempty"`
+	Error    string     `json:"error,omitempty"`
+
+	UDP        []UDPResult      `json:"udp,omitempty"`
+	Web        []WebInfo        `json:"web,omitempty"`
+	Subdomains *SubdomainResult `json:"subdomains,omitempty"`
 }
 
 // RunScan is the CLI entry point for `speedtest scan <ip>`.
@@ -95,6 +112,12 @@ func RunScan(args []string) error {
 	timeout := fs.Duration("timeout", 500*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 500, "concurrent connections")
 	banner := fs.Bool("banner", false, "grab service banners from open ports")
+	subdomains := fs.Bool("subdomains", true, "when a domain has open ports, also search for other subdomains (DNS dictionary, MX/NS, TLS certificates, crt.sh)")
+	noCT := fs.Bool("no-ct", false, "skip the crt.sh Certificate Transparency lookup during the subdomain search")
+	resolveSubs := fs.Bool("resolve-subs", false, "resolve subdomains found from certificates/CT to addresses (slower, more DNS traffic)")
+	fingerprint := fs.Bool("fingerprint", true, "fingerprint open web ports (title, Server, technologies)")
+	udpSpec := fs.String("udp", "", "also scan these UDP ports (e.g. 53,161 or \"common\" for the built-in set)")
+	web := fs.Bool("web", false, "shortcut: only probe common web ports and fingerprint them")
 	asJSON := fs.Bool("json", false, "output result as JSON")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
@@ -105,47 +128,224 @@ func RunScan(args []string) error {
 	}
 	target := pos[0]
 
+	// The --web shortcut narrows the scan to the common web ports and forces the
+	// fingerprint on, so "scan a website" is one flag.
+	if *web {
+		*portSpec = webPortSpec
+		*fingerprint = true
+	}
+
 	ports, err := parsePorts(*portSpec)
 	if err != nil {
 		return err
 	}
+	udpPorts, err := parseUDPSpec(*udpSpec)
+	if err != nil {
+		return err
+	}
+
+	ip, err := ResolveTarget(context.Background(), target, resolveTimeout)
+	if err != nil {
+		return err
+	}
+	if warn := loopbackWarning(target, ip); warn != "" && !*asJSON {
+		fmt.Println(warn)
+	}
 
 	if !*asJSON {
-		fmt.Printf("Сканирую %s  (портов: %d, таймаут %s)\n", target, len(ports), *timeout)
+		fmt.Printf("Сканирую %s  (портов: %d, таймаут %s)\n", describeTarget(target, ip), len(ports), *timeout)
 	}
 	start := time.Now()
-	open := scanHost(target, ports, *timeout, *workers)
+	open := scanHost(ip, ports, *timeout, *workers)
 	elapsed := time.Since(start)
 
 	res := ScanResult{
-		Host:     target,
-		Hostname: reverseDNS(target, time.Second),
+		Host:     ip,
+		Hostname: hostnameFor(target, ip),
 		Open:     toPortInfos(open),
 	}
 	if *banner {
-		AddBanners(target, res.Open, *timeout)
+		AddBanners(ip, res.Open, *timeout)
+	}
+
+	// UDP sweep runs regardless of the TCP outcome: some hosts only answer on UDP.
+	if len(udpPorts) > 0 {
+		if !*asJSON {
+			fmt.Printf("Проверяю UDP-портов: %d...\n", len(udpPorts))
+		}
+		res.UDP = ScanUDP(context.Background(), ip, udpPorts, udpTimeout(*timeout), *workers)
+	}
+
+	// Fingerprint the open web ports: what software answers, and on which page.
+	if *fingerprint && len(open) > 0 {
+		res.Web = FingerprintWeb(context.Background(), ip, target, open, 4*time.Second)
+	}
+
+	// Open ports on a named host make its neighbours worth knowing: the same zone
+	// usually holds more hosts than the one name the user happened to type.
+	if *subdomains && target != ip && len(open) > 0 {
+		if !*asJSON {
+			fmt.Printf("\nИщу субдомены %s...\n", baseDomain(target))
+		}
+		sub := EnumSubdomains(context.Background(), SubdomainOptions{
+			Domain: target, Addr: ip, Ports: open, Timeout: 2 * time.Second, Workers: 100,
+			NoCT: *noCT, Resolve: *resolveSubs,
+		})
+		res.Subdomains = &sub
 	}
 
 	if *asJSON {
 		return printJSON(res)
 	}
 
-	name := ""
-	if res.Hostname != "" {
-		name = "  (" + res.Hostname + ")"
+	label := describeTarget(target, ip)
+	if res.Hostname != "" && res.Hostname != target {
+		label += "  (" + res.Hostname + ")"
 	}
-	if len(open) == 0 {
-		fmt.Printf("Открытых портов не найдено на %s%s (%.1f с).\n", target, name, elapsed.Seconds())
+	if len(open) == 0 && len(openUDP(res.UDP)) == 0 {
+		fmt.Printf("Открытых портов не найдено на %s (%.1f с).\n", label, elapsed.Seconds())
 		return nil
 	}
+	if len(open) > 0 {
+		tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		fmt.Fprintf(tw, "\nХост: %s\n\nПОРТ\tСТАТУС\tСЕРВИС\tБАННЕР\n", label)
+		for _, p := range res.Open {
+			fmt.Fprintf(tw, "%d\tоткрыт\t%s\t%s\n", p.Port, dash(p.Service), dash(p.Banner))
+		}
+		tw.Flush()
+		fmt.Printf("\nОткрытых портов (TCP): %d за %.1f с.\n", len(open), elapsed.Seconds())
+	}
+	printUDP(res.UDP)
+	printWeb(res.Web)
+	printSubdomains(res.Subdomains)
+	return nil
+}
+
+// webPortSpec is the port set the --web shortcut scans.
+const webPortSpec = "80,81,443,591,2480,3000,4443,4567,5000,7001,8000,8008,8080,8081,8088,8090,8180,8443,8843,8880,9000,9080,9090,9443,10443"
+
+// parseUDPSpec expands a --udp value into a port list. "" means no UDP scan;
+// "common" (or "default"/"all") means the built-in service set; anything else is
+// parsed like a normal port spec.
+func parseUDPSpec(spec string) ([]int, error) {
+	spec = strings.TrimSpace(spec)
+	switch spec {
+	case "":
+		return nil, nil
+	case "common", "default", "all":
+		return commonUDPPorts, nil
+	default:
+		return parsePorts(spec)
+	}
+}
+
+// udpTimeout gives a UDP probe a longer wait than TCP: a datagram has no
+// handshake, so a slow service needs time to answer before silence is assumed.
+func udpTimeout(base time.Duration) time.Duration {
+	if base < time.Second {
+		return time.Second
+	}
+	return base
+}
+
+// openUDP returns only the UDP results that are open or open|filtered — the ones
+// worth showing; definite "closed" ports are noise.
+func openUDP(res []UDPResult) []UDPResult {
+	var out []UDPResult
+	for _, r := range res {
+		if r.State != UDPClosed {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// printUDP renders the interesting UDP results (open / open|filtered).
+func printUDP(res []UDPResult) {
+	shown := openUDP(res)
+	if len(shown) == 0 {
+		return
+	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintf(tw, "\nХост: %s%s\n\nПОРТ\tСТАТУС\tСЕРВИС\tБАННЕР\n", target, name)
-	for _, p := range res.Open {
-		fmt.Fprintf(tw, "%d\tоткрыт\t%s\t%s\n", p.Port, dash(p.Service), dash(p.Banner))
+	fmt.Fprintf(tw, "\nUDP-порты\n\nПОРТ\tСОСТОЯНИЕ\tСЕРВИС\tОТВЕТ\n")
+	open := 0
+	for _, r := range shown {
+		if r.State == UDPOpen {
+			open++
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", r.Port, r.State, dash(r.Service), dash(r.Reply))
 	}
 	tw.Flush()
-	fmt.Printf("\nОткрытых портов: %d за %.1f с.\n", len(open), elapsed.Seconds())
-	return nil
+	fmt.Printf("\nUDP: ответили %d, возможно открыты (без ответа) %d.\n", open, len(shown)-open)
+}
+
+// printWeb renders the web fingerprint of each open HTTP port.
+func printWeb(web []WebInfo) {
+	if len(web) == 0 {
+		return
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintf(tw, "\nВеб-сервисы\n\nПОРТ\tКОД\tSERVER\tТЕХНОЛОГИИ\tЗАГОЛОВОК\n")
+	for _, w := range web {
+		status := fmt.Sprint(w.Status)
+		if w.Redirect != "" {
+			status += " -> " + w.Redirect
+		}
+		fmt.Fprintf(tw, "%d/%s\t%s\t%s\t%s\t%s\n",
+			w.Port, w.Scheme, status, dash(w.Server), dash(strings.Join(w.Tech, ", ")), dash(w.Title))
+	}
+	tw.Flush()
+}
+
+// printSubdomains renders the subdomain search as an aligned table.
+func printSubdomains(sub *SubdomainResult) {
+	if sub == nil {
+		return
+	}
+	if len(sub.Wildcard) > 0 {
+		fmt.Printf("\nУ зоны %s есть wildcard (*.%s -> %s) — совпадения по нему отброшены.\n",
+			sub.Base, sub.Base, strings.Join(sub.Wildcard, ", "))
+	}
+	if len(sub.Found) == 0 {
+		fmt.Printf("\nСубдоменов %s не найдено.\n", sub.Base)
+		return
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintf(tw, "\nСубдомены %s (%d)\n\nИМЯ\tАДРЕСА\tИСТОЧНИК\n", sub.Base, len(sub.Found))
+	hijacked := 0
+	for _, s := range sub.Found {
+		if hasLoopback(s.Addrs) {
+			hijacked++
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Name,
+			dash(formatAddrs(s.Addrs)), strings.Join(s.Sources, ", "))
+	}
+	tw.Flush()
+	if hijacked > 0 {
+		fmt.Printf("\nИмён с адресом localhost: %d — их режет локальный DNS, реальные адреса другие.\n", hijacked)
+	}
+}
+
+// formatAddrs renders an address set for the table, keeping the column narrow:
+// a round-robin name can answer with a dozen addresses, and listing them all
+// pushes every other column off the screen.
+func formatAddrs(addrs []string) string {
+	const shown = 2
+	if len(addrs) <= shown {
+		return strings.Join(addrs, ", ")
+	}
+	return fmt.Sprintf("%s +%d", strings.Join(addrs[:shown], ", "), len(addrs)-shown)
+}
+
+// hasLoopback reports whether a name resolved to localhost, which means local
+// DNS filtering answered instead of the real zone.
+func hasLoopback(addrs []string) bool {
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && ip.IsLoopback() {
+			return true
+		}
+	}
+	return false
 }
 
 // toPortInfos attaches service names to a sorted list of open ports.

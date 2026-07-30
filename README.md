@@ -15,7 +15,7 @@ also available as a scriptable subcommand. The interface is in Russian.
 | **Пинг** / `ping` | TCP-connect latency to **any** device (no agent), gping-style live graph. |
 | **Трейс** / `trace` | Traceroute + continuous per-hop ping (mtr/trippy-style), live loss & RTT. |
 | **HTTP** / `httpdl` | Download speed from any device's own HTTP(S) server — no agent on target. |
-| **Скан** / `scan` | TCP port scan of a single host with a live progress bar; optional `--banner` service detection. |
+| **Скан** / `scan` | TCP (and optional UDP) port scan of a single host with a live progress bar; `--banner` service detection, web fingerprint of open HTTP ports, and — for a domain with open ports — a subdomain search (DNS/MX/NS, TLS certs, crt.sh). |
 | **Обзор** / `discover` | Sweep the local subnet: live hosts, open ports, hostname, MAC, vendor. |
 | **Аудит** / `audit` | Security audit of a host: TLS/certificate, HTTP security headers, exposed risky ports → A–F grade. |
 | **Wi-Fi** / `wifi` | Wi-Fi survey: current SSID/signal/channel, nearby networks, least-congested 2.4 GHz channel advice. |
@@ -93,6 +93,10 @@ Download-only estimate; accurate only against a large response.
 ```sh
 speedtest scan 192.168.1.1 --ports 1-65535 --workers 1000
 speedtest scan 192.168.1.1 --ports 22,80,443 --banner   # grab service banners
+speedtest scan example.com                              # names resolve once, up front
+speedtest scan example.com --web                         # only web ports + fingerprint them
+speedtest scan example.com --udp common                  # also sweep the common UDP services
+speedtest scan example.com --subdomains=false --no-ct    # skip subdomain / crt.sh lookups
 speedtest discover                       # auto-detect local /24
 speedtest discover --cidr 10.0.0.0/24 --ports 22,80,443,3389 --json
 speedtest discover --cidr 192.168.20.0/24,192.168.100.0/24   # several subnets at once
@@ -122,6 +126,41 @@ press Enter:
   SNMP community (for the full router-table map) and search depth.
 `scan --banner` reads the greeting each open port volunteers (SSH/FTP/SMTP) or
 the HTTP `Server` header, revealing the running software and version.
+
+**Scanning by name** — a hostname is resolved once before the scan and every
+port is then dialled at that one address, so a round-robin or CDN name can't
+answer each connection with a different server. The address is printed next to
+the name (`example.com (93.184.216.34)`), an unresolvable name is an error
+rather than an empty result, and a name that local DNS filtering points at
+`127.0.0.1` is called out — otherwise the scanner reports its own open ports.
+
+**Subdomain search** — when a named host turns out to have open ports, the zone
+is searched for its other names (skip with `--subdomains=false`). Four sources,
+none needing an API key: a dictionary of ~250 common labels resolved against DNS,
+the zone's own MX/NS/CNAME records, the names listed in the TLS certificates
+served on the open ports, and the Certificate Transparency logs via crt.sh
+(`--no-ct` to skip). CT is the deepest source — every certificate a CA ever
+issued for the zone is public — and finds internal/staging/decommissioned hosts a
+dictionary never would; it is best-effort, so a crt.sh outage just contributes
+nothing. Names from certificates and CT are not resolved by default (they prove a
+name existed, not that it points anywhere today); add `--resolve-subs` to look
+them up. Wildcard DNS is detected first, so a catch-all zone doesn't report the
+whole dictionary as real hosts.
+
+**UDP scan** — `--udp <ports|common>` sweeps UDP alongside the TCP scan. UDP is
+connectionless, so results are three-valued: `open` (the service replied to a
+protocol-specific probe — DNS, NTP, SNMP, NetBIOS, SSDP, IKE, mDNS, …), `closed`
+(an ICMP port-unreachable came back), or `open|filtered` (silence, which is
+either an open service that ignored the probe or a firewall dropping the packet).
+Only the interesting (non-closed) ports are shown. Analogous to `nmap -sU`.
+
+**Web fingerprint** — every open web port is fetched once (`--fingerprint`, on by
+default; `--web` scans only web ports and turns it on): the status code, any
+redirect, the `Server` header, the page `<title>`, and the technologies inferred
+from headers and body (nginx/Apache/IIS, PHP/ASP.NET/Express/Next.js, WordPress/
+Drupal/Joomla, React/Vue/Angular, Grafana/Kibana/Jenkins, …). This is the local,
+no-dependency equivalent of `whatweb`/`httpx`. The TLS certificate is read but
+not trusted, so an expired or self-signed cert still gets fingerprinted.
 
 ### Security audit
 ```sh

@@ -15,10 +15,12 @@ var httpPorts = map[int]bool{
 	8888: true, 3000: true, 9000: true, 9090: true,
 }
 
-// tlsPorts are ports that speak TLS immediately; a plaintext banner grab would
-// only capture binary handshake noise, so we skip them.
+// tlsPorts are ports that speak TLS immediately. A plaintext banner grab would
+// only capture binary handshake noise there, so grabBanner skips them; the
+// subdomain search uses the same set to decide where a certificate can be read.
 var tlsPorts = map[int]bool{
-	443: true, 465: true, 636: true, 993: true, 995: true, 8443: true,
+	443: true, 465: true, 636: true, 989: true, 990: true, 993: true, 995: true,
+	4443: true, 5986: true, 8443: true, 8843: true, 8883: true, 9443: true, 10443: true,
 }
 
 // grabBanner opens a short-lived connection to host:port and returns the first

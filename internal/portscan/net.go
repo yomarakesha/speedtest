@@ -23,6 +23,63 @@ func reverseDNS(ip string, timeout time.Duration) string {
 	return strings.TrimSuffix(names[0], ".")
 }
 
+// ResolveTarget turns a scan target into the single address that will actually
+// be scanned. An IP literal is returned unchanged; a name is resolved once, up
+// front, so every port of a scan reaches the same host — a round-robin or CDN
+// name otherwise answers each of the hundreds of dials with a different address
+// — and so callers can show which address the results belong to. IPv4 is
+// preferred; an IPv6 address is used only when the name has no A record.
+func ResolveTarget(ctx context.Context, target string, timeout time.Duration) (string, error) {
+	if net.ParseIP(target) != nil {
+		return target, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", target)
+	if err != nil {
+		return "", fmt.Errorf("не удалось разрешить имя %q: %w", target, err)
+	}
+	for _, ip := range ips {
+		if ip.To4() != nil {
+			return ip.String(), nil
+		}
+	}
+	if len(ips) > 0 {
+		return ips[0].String(), nil
+	}
+	return "", fmt.Errorf("имя %q не разрешается ни в один адрес", target)
+}
+
+// describeTarget labels a scanned host as "name (ip)" so the address behind a
+// name is always visible, and as plain "ip" when the target was already an IP.
+func describeTarget(target, ip string) string {
+	if target == ip {
+		return ip
+	}
+	return target + " (" + ip + ")"
+}
+
+// hostnameFor returns the name to record for a scanned address: the name the
+// caller gave, or a reverse lookup when the caller gave an IP.
+func hostnameFor(target, ip string) string {
+	if target != ip {
+		return target
+	}
+	return reverseDNS(ip, time.Second)
+}
+
+// loopbackWarning returns a note when a name resolved to a loopback address,
+// which means the scan is hitting this machine and not the named host. Local
+// DNS filtering (ad-blockers, Pi-hole, some routers) answers blocked names with
+// 127.0.0.1, and the resulting "open" ports are the scanner's own.
+func loopbackWarning(target, ip string) string {
+	if target == ip || !net.ParseIP(ip).IsLoopback() {
+		return ""
+	}
+	return fmt.Sprintf("ВНИМАНИЕ: %s разрешается в %s (localhost) — DNS подменён, "+
+		"результаты относятся к этой машине, а не к %s.", target, ip, target)
+}
+
 // localCIDR returns the network (in CIDR form, e.g. "192.168.1.0/24") of the
 // interface the OS would actually use to reach the internet. This avoids
 // picking a Docker/WSL/VPN virtual adapter over the real LAN NIC.
