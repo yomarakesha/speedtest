@@ -44,23 +44,16 @@ func Devices() ([]Device, error) {
 // TopTalkers opens opt.Iface, tallies bytes per remote peer, and calls cb with
 // the current ranking every opt.Interval until ctx is cancelled.
 func TopTalkers(ctx context.Context, opt Options, cb func([]Talker)) error {
-	iface := opt.Iface
-	if iface == "" {
-		var err error
-		if iface, err = firstUsableDevice(); err != nil {
-			return err
-		}
+	handle, err := openCapture(opt.Iface)
+	if err != nil {
+		return err
 	}
+	defer handle.Close()
+
 	interval := opt.Interval
 	if interval <= 0 {
 		interval = time.Second
 	}
-
-	handle, err := pcap.OpenLive(iface, 65536, true, pcap.BlockForever)
-	if err != nil {
-		return ErrUnavailable
-	}
-	defer handle.Close()
 
 	acc := newAccumulator()
 	src := gopacket.NewPacketSource(handle, handle.LinkType())
@@ -81,6 +74,22 @@ func TopTalkers(ctx context.Context, opt Options, cb func([]Talker)) error {
 			observePacket(acc, pkt)
 		}
 	}
+}
+
+// openCapture opens iface (or the first usable device if empty) for live
+// capture. Shared by TopTalkers and TopProcesses.
+func openCapture(iface string) (*pcap.Handle, error) {
+	if iface == "" {
+		var err error
+		if iface, err = firstUsableDevice(); err != nil {
+			return nil, err
+		}
+	}
+	handle, err := pcap.OpenLive(iface, 65536, true, pcap.BlockForever)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	return handle, nil
 }
 
 // observePacket decodes one frame's network/link addresses and credits the
