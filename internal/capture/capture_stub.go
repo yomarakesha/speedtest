@@ -15,3 +15,8 @@ func Devices() ([]Device, error) { return nil, ErrUnavailable }
 func TopTalkers(ctx context.Context, opt Options, cb func([]Talker)) error {
 	return ErrUnavailable
 }
+
+// TopProcesses streams per-process traffic. Unavailable without -tags pcap.
+func TopProcesses(ctx context.Context, opt Options, cb func([]ProcTraffic)) error {
+	return ErrUnavailable
+}
