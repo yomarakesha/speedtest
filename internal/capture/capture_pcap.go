@@ -115,6 +115,10 @@ func observePacket(acc *accumulator, pkt gopacket.Packet) {
 	acc.observe(srcIP, srcMAC, dstIP, dstMAC, length)
 }
 
+// pcapIfLoopback mirrors libpcap's PCAP_IF_LOOPBACK bit (pcap/pcap.h) — not
+// exported as a named constant by gopacket's pcap package.
+const pcapIfLoopback = 0x00000001
+
 // firstUsableDevice picks the first device that has an address and is not
 // loopback, as a sensible capture default.
 func firstUsableDevice() (string, error) {
@@ -126,7 +130,7 @@ func firstUsableDevice() (string, error) {
 		if len(d.Addresses) == 0 {
 			continue
 		}
-		if d.Flags&uint32(pcap.InterfaceFlagLoopback) != 0 {
+		if d.Flags&pcapIfLoopback != 0 {
 			continue
 		}
 		return d.Name, nil
