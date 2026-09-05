@@ -48,6 +48,7 @@ func New() model {
 			newDiscoverTab(),
 			newWiFiTab(),
 			newBWTab(),
+			newAppsTab(),
 			newHTTPDLTab(cfg.HTTPURL),
 			newAuditTab(cfg.AuditHost),
 			newHistoryTab(),
