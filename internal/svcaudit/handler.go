@@ -9,6 +9,11 @@ import (
 	"speedtest/internal/audit"
 )
 
+// maxRequestBody caps the JSON request body svcaudit will read — these
+// requests are a handful of short fields, never a legitimate reason to
+// send more.
+const maxRequestBody = 1 << 20 // 1 MiB
+
 type auditRequest struct {
 	Target  string `json:"target"`
 	WithDNS bool   `json:"with_dns"`
@@ -33,6 +38,7 @@ func handleAudit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	var req auditRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
