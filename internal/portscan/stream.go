@@ -106,6 +106,7 @@ type DiscoverOptions struct {
 	Workers    int
 	ScanAll    bool // skip the liveness pre-check
 	AllSubnets bool // sweep every directly-attached subnet, not just one
+	NoICMP     bool // liveness by TCP/ARP only, no ping probe
 }
 
 // DiscoverPhase names the two stages a UI can show.
@@ -188,7 +189,7 @@ func discoverSubnet(ctx context.Context, network string, opt DiscoverOptions, on
 		if onPhase != nil {
 			onPhase(PhaseLiveness, 0, len(hosts))
 		}
-		targets = filterAlive(hosts, opt.Timeout, workers)
+		targets = filterAlive(hosts, opt.Timeout, workers, !opt.NoICMP)
 		if onPhase != nil {
 			onPhase(PhaseLiveness, len(hosts), len(hosts))
 		}

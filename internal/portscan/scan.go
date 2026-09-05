@@ -374,6 +374,7 @@ func RunDiscover(args []string) error {
 	timeout := fs.Duration("timeout", 400*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 1000, "global concurrent connections")
 	scanAll := fs.Bool("all", false, "scan every address, skip the liveness pre-check")
+	noICMP := fs.Bool("no-icmp", false, "liveness by TCP/ARP only, without ICMP ping probes")
 	allSubnets := fs.Bool("all-subnets", false, "sweep every directly-attached subnet, not just one")
 	expand := fs.Bool("expand", false, "auto-discover subnets (traceroute + SNMP) and scan them recursively")
 	expandDepth := fs.Int("expand-depth", 2, "how many hops of subnets to follow with --expand")
@@ -394,17 +395,17 @@ func RunDiscover(args []string) error {
 	}
 
 	if *expand {
-		return runDiscoverExpand(SplitCIDRs(*cidr), ports, *timeout, *workers, *expandDepth, *community, *scanAll, *asJSON)
+		return runDiscoverExpand(SplitCIDRs(*cidr), ports, *timeout, *workers, *expandDepth, *community, *scanAll, *noICMP, *asJSON)
 	}
 
 	if *allSubnets {
-		return runDiscoverAll(ports, *timeout, *workers, *scanAll, *asJSON)
+		return runDiscoverAll(ports, *timeout, *workers, *scanAll, *noICMP, *asJSON)
 	}
 
 	// An explicit --cidr may name several subnets; sweep them all via DiscoverLive.
 	cidrs := SplitCIDRs(*cidr)
 	if len(cidrs) > 1 {
-		return runDiscoverCIDRs(cidrs, ports, *timeout, *workers, *scanAll, *asJSON)
+		return runDiscoverCIDRs(cidrs, ports, *timeout, *workers, *scanAll, *noICMP, *asJSON)
 	}
 
 	network := ""
@@ -433,7 +434,7 @@ func RunDiscover(args []string) error {
 		if !*asJSON {
 			fmt.Printf("Проверяю %d адресов на живые хосты...\n", len(hosts))
 		}
-		targets = filterAlive(hosts, *timeout, *workers)
+		targets = filterAlive(hosts, *timeout, *workers, !*noICMP)
 		if !*asJSON {
 			fmt.Printf("Живых хостов: %d.\n", len(targets))
 		}
@@ -496,7 +497,7 @@ func RunDiscover(args []string) error {
 // runDiscoverAll sweeps every directly-attached subnet via DiscoverLive and
 // prints the combined result. Progress is not streamed per host here; the
 // subnet list is announced up front so the scope is clear.
-func runDiscoverAll(ports []int, timeout time.Duration, workers int, scanAll, asJSON bool) error {
+func runDiscoverAll(ports []int, timeout time.Duration, workers int, scanAll, noICMP, asJSON bool) error {
 	subnets := localSubnets()
 	if len(subnets) == 0 {
 		return fmt.Errorf("не найдено локальных подсетей для сканирования")
@@ -506,7 +507,7 @@ func runDiscoverAll(ports []int, timeout time.Duration, workers int, scanAll, as
 	}
 
 	results, err := DiscoverLive(context.Background(),
-		DiscoverOptions{AllSubnets: true, Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll},
+		DiscoverOptions{AllSubnets: true, Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll, NoICMP: noICMP},
 		nil, nil)
 	if err != nil {
 		return err
@@ -527,13 +528,13 @@ func runDiscoverAll(ports []int, timeout time.Duration, workers int, scanAll, as
 // runDiscoverCIDRs sweeps an explicit list of subnets via DiscoverLive and
 // prints the combined result. Unreachable/unscannable subnets are skipped; the
 // scope is announced up front.
-func runDiscoverCIDRs(cidrs []string, ports []int, timeout time.Duration, workers int, scanAll, asJSON bool) error {
+func runDiscoverCIDRs(cidrs []string, ports []int, timeout time.Duration, workers int, scanAll, noICMP, asJSON bool) error {
 	if !asJSON {
 		fmt.Printf("Подсети для сканирования (%d): %s\n\n", len(cidrs), strings.Join(cidrs, ", "))
 	}
 
 	results, err := DiscoverLive(context.Background(),
-		DiscoverOptions{CIDRs: cidrs, Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll},
+		DiscoverOptions{CIDRs: cidrs, Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll, NoICMP: noICMP},
 		nil, nil)
 	if err != nil {
 		return err
@@ -553,7 +554,7 @@ func runDiscoverCIDRs(cidrs []string, ports []int, timeout time.Duration, worker
 
 // runDiscoverExpand auto-discovers subnets (traceroute + optional SNMP) starting
 // from seeds (or the local subnets when empty) and scans everything it finds.
-func runDiscoverExpand(seeds []string, ports []int, timeout time.Duration, workers, depth int, community string, scanAll, asJSON bool) error {
+func runDiscoverExpand(seeds []string, ports []int, timeout time.Duration, workers, depth int, community string, scanAll, noICMP, asJSON bool) error {
 	if !asJSON {
 		start := "локальные подсети"
 		if len(seeds) > 0 {
@@ -568,7 +569,7 @@ func runDiscoverExpand(seeds []string, ports []int, timeout time.Duration, worke
 
 	res, err := ExpandDiscover(context.Background(),
 		ExpandOptions{Seeds: seeds, MaxDepth: depth, Community: community,
-			Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll},
+			Ports: ports, Timeout: timeout, Workers: workers, ScanAll: scanAll, NoICMP: noICMP},
 		func(cidr, source string) {
 			if !asJSON {
 				fmt.Printf("  + подсеть %-20s (%s)\n", cidr, source)

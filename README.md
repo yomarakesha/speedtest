@@ -16,7 +16,7 @@ also available as a scriptable subcommand. The interface is in Russian.
 | **Трейс** / `trace` | Traceroute + continuous per-hop ping (mtr/trippy-style), live loss & RTT. |
 | **HTTP** / `httpdl` | Download speed from any device's own HTTP(S) server — no agent on target. |
 | **Скан** / `scan` | TCP (and optional UDP) port scan of a single host with a live progress bar; `--banner` service detection, web fingerprint of open HTTP ports, and — for a domain with open ports — a subdomain search (DNS/MX/NS, TLS certs, crt.sh). |
-| **Обзор** / `discover` | Sweep the local subnet: live hosts, open ports, hostname, MAC, vendor. |
+| **Скан сети** / `discover` | Sweep the local subnet: live hosts, open ports, hostname, MAC, vendor. |
 | **Аудит** / `audit` | Security audit of a host: TLS/certificate, HTTP security headers, exposed risky ports → A–F grade. |
 | **Wi-Fi** / `wifi` | Wi-Fi survey: current SSID/signal/channel, nearby networks, least-congested 2.4 GHz channel advice. |
 | **Полоса** / `bwmon` | This machine's live per-interface throughput (rx/tx) from OS byte counters. |
@@ -103,10 +103,20 @@ speedtest discover --cidr 192.168.20.0/24,192.168.100.0/24   # several subnets a
 speedtest discover --all-subnets         # every attached subnet (interfaces + routes)
 speedtest discover --expand              # auto-find subnets (traceroute) and scan them
 speedtest discover --cidr 192.168.100.0/24 --expand --snmp-community public
+speedtest discover --no-icmp             # liveness by TCP/ARP only, no ping probes
 ```
 Discovery does a fast liveness pre-check, then deep-scans only live hosts and
 annotates each with reverse-DNS name, MAC and vendor (system ARP table + OUI).
 `--cidr` accepts a comma-separated list.
+
+**Liveness** combines three independent signals, so a host is found even when it
+answers only one of them: the system **ARP cache** (an L2 neighbour with a real
+unicast MAC exists — read before *and* after probing, since the probes themselves
+resolve addresses), an **ICMP echo** (sent without administrator/root, same
+mechanism as the traceroute), and the **TCP** liveness ports (a SYN-ACK *or* a
+RST both prove the host is there). `--no-icmp` drops the ping probe for networks
+that rate-limit or block ICMP; `--all` skips the pre-check entirely and
+deep-scans every address in the range.
 
 **Auto-discovering subnets you don't know about** — `--all-subnets` only sees
 subnets in this machine's routing table. `--expand` goes further: it traceroutes
@@ -116,7 +126,7 @@ learn every subnet that router bridges. New subnets are scanned recursively up t
 `--expand-depth` (default 2). Everything is read-only; unreachable gateways and
 closed SNMP agents simply contribute nothing.
 
-**In the TUI**, the **Обзор** tab is a plain menu — pick a scope with ↑/↓ and
+**In the TUI**, the **Скан сети** tab is a plain menu — pick a scope with ↑/↓ and
 press Enter:
 
 - **Моя сеть** — the subnet this computer is on.
@@ -124,6 +134,11 @@ press Enter:
 - **Выбрать сети вручную** — type a comma-separated CIDR list.
 - **Найти все сети** — the `--expand` sweep; optional fields for seed subnets, an
   SNMP community (for the full router-table map) and search depth.
+
+`[i]` toggles the ICMP-пинг probe for any of the four scopes (the CLI's
+`--no-icmp`). The results table carries the MAC alongside the vendor, so a device
+found by its ARP entry alone — no open port, no reverse-DNS name — is still
+identifiable.
 `scan --banner` reads the greeting each open port volunteers (SSH/FTP/SMTP) or
 the HTTP `Server` header, revealing the running software and version.
 

@@ -35,6 +35,7 @@ type ExpandOptions struct {
 	Timeout    time.Duration // per-probe connect/SNMP timeout
 	Workers    int           // global connection budget per subnet scan
 	ScanAll    bool          // skip the liveness pre-check
+	NoICMP     bool          // liveness by TCP/ARP only, no ping probe
 }
 
 // ExpandResult is the outcome of an expand sweep.
@@ -102,7 +103,7 @@ func ExpandDiscover(ctx context.Context, opt ExpandOptions,
 		enqueue(s, "локальная")
 	}
 
-	scanOpt := DiscoverOptions{Ports: opt.Ports, Timeout: opt.Timeout, Workers: opt.Workers, ScanAll: opt.ScanAll}
+	scanOpt := DiscoverOptions{Ports: opt.Ports, Timeout: opt.Timeout, Workers: opt.Workers, ScanAll: opt.ScanAll, NoICMP: opt.NoICMP}
 	for depth := 0; depth <= opt.MaxDepth; depth++ {
 		frontier := queue
 		queue = nil

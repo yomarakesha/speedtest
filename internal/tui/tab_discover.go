@@ -57,6 +57,7 @@ type discoverTab struct {
 	mode     discMode
 	editing  bool // true while the user is filling in a mode's fields
 	fieldIdx int  // focused field within the active mode
+	noICMP   bool // liveness by TCP/ARP only, for networks that block ping
 
 	cidrIn  textinput.Model // modeManual: subnet list
 	seedIn  textinput.Model // modeExpand: optional seed subnets
@@ -95,7 +96,7 @@ func newDiscoverTab() tab {
 	}
 }
 
-func (t *discoverTab) Title() string { return "Обзор" }
+func (t *discoverTab) Title() string { return "Скан сети" }
 func (t *discoverTab) Init() tea.Cmd { return textinput.Blink }
 func (t *discoverTab) Busy() bool    { return t.running }
 
@@ -108,7 +109,7 @@ func (t *discoverTab) ShortHelp() []string {
 	case t.done:
 		return []string{"[Enter/r] повторить", "[Esc] выбрать заново", "[↑/↓] прокрутка"}
 	default:
-		return []string{"[↑/↓] выбрать", "[Enter] дальше"}
+		return []string{"[↑/↓] выбрать", "[Enter] дальше", "[i] ICMP-пинг"}
 	}
 }
 
@@ -122,16 +123,18 @@ func (t *discoverTab) SetSize(w, h int) {
 	t.tbl.SetHeight(max(h-discReserveV, 3))
 }
 
-// discoverColumns sizes the columns to the available width: IP/vendor fixed,
-// name and ports share the slack.
+// discoverColumns sizes the columns to the available width: IP/MAC/vendor
+// fixed, name and ports share the slack. MAC earns its place because a host can
+// be found by its ARP entry alone, with no open port to show.
 func discoverColumns(w int) []table.Column {
-	const ipW, vendorW = 15, 16
-	rest := max(w-ipW-vendorW-8, 20)
+	const ipW, macW, vendorW = 15, 17, 16
+	rest := max(w-ipW-macW-vendorW-10, 20)
 	nameW := rest * 3 / 5
 	portsW := rest - nameW
 	return []table.Column{
 		{Title: "IP", Width: ipW},
 		{Title: "Имя", Width: nameW},
+		{Title: "MAC", Width: macW},
 		{Title: "Производитель", Width: vendorW},
 		{Title: "Порты", Width: portsW},
 	}
@@ -194,6 +197,7 @@ func (t *discoverTab) start() tea.Cmd {
 			MaxDepth:  atoiSafe(strings.TrimSpace(t.depthIn.Value())),
 			Timeout:   discoverTimeout,
 			Workers:   discoverWorkers,
+			NoICMP:    t.noICMP,
 		}
 		go func() {
 			_, err := portscan.ExpandDiscover(context.Background(), opt,
@@ -204,7 +208,7 @@ func (t *discoverTab) start() tea.Cmd {
 		return listen(ch)
 	}
 
-	opt := portscan.DiscoverOptions{Timeout: discoverTimeout, Workers: discoverWorkers}
+	opt := portscan.DiscoverOptions{Timeout: discoverTimeout, Workers: discoverWorkers, NoICMP: t.noICMP}
 	switch t.mode {
 	case modeAll:
 		opt.AllSubnets = true
@@ -303,6 +307,9 @@ func (t *discoverTab) handleKey(msg tea.KeyMsg) (tab, tea.Cmd) {
 	case "down":
 		t.mode = (t.mode + 1) % discMode(len(discModes))
 		return t, nil
+	case "i":
+		t.noICMP = !t.noICMP
+		return t, nil
 	case "enter":
 		if t.mode == modeManual || t.mode == modeExpand {
 			return t, t.enterEditing()
@@ -318,6 +325,7 @@ func (t *discoverTab) refreshRows() {
 		rows = append(rows, table.Row{
 			h.IP,
 			trunc(h.Hostname, 28),
+			trunc(h.MAC, 17),
 			trunc(h.Vendor, 16),
 			portsSummary(h.Open),
 		})
@@ -336,7 +344,7 @@ func (t *discoverTab) View() string {
 		t.viewMenu(&b)
 	}
 	return lipgloss.Place(t.w, t.h, lipgloss.Left, lipgloss.Top,
-		t.sty.frame("Обзор сети", t.w, t.h, b.String()))
+		t.sty.frame("Скан сети (IP + порты)", t.w, t.h, b.String()))
 }
 
 // viewMenu renders the mode chooser plus any fields the selected mode needs.
@@ -352,6 +360,15 @@ func (t *discoverTab) viewMenu(b *strings.Builder) {
 		fmt.Fprintf(b, "%s%-24s %s\n", marker, name, t.sty.muted.Render(m.desc))
 	}
 	b.WriteString("\n")
+
+	// Liveness knob: ping is on by default and finds devices that ignore TCP;
+	// turning it off helps only where ICMP is blocked or rate-limited.
+	state, hint := t.sty.good.Render("вкл"), "находит устройства, молчащие по TCP"
+	if t.noICMP {
+		state, hint = t.sty.muted.Render("выкл"), "только TCP и ARP-таблица"
+	}
+	fmt.Fprintf(b, "  ICMP-пинг: %s  %s  %s\n\n",
+		state, t.sty.muted.Render("[i]"), t.sty.muted.Render(hint))
 
 	switch {
 	case t.editing && t.mode == modeManual:

@@ -36,7 +36,7 @@ func TestBackgroundBroadcast(t *testing.T) {
 	m, _ = m.Update(discPhaseMsg{phase: "scan", done: 3, total: 10})
 
 	rm := m.(model)
-	disc, ok := rm.tabs[5].(*discoverTab) // Обзор
+	disc, ok := rm.tabs[5].(*discoverTab) // Скан сети
 	if !ok {
 		t.Fatalf("tab 5 is %T, expected *discoverTab", rm.tabs[5])
 	}
