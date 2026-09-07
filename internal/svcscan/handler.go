@@ -16,6 +16,28 @@ import (
 // send more.
 const maxRequestBody = 1 << 20 // 1 MiB
 
+// maxWorkers and maxTimeoutMs clamp caller-supplied concurrency/timeout so a
+// single request can't spin up an unbounded number of goroutines or pin a
+// worker on a multi-hour per-port timeout.
+const (
+	maxWorkers   = 2000
+	maxTimeoutMs = 30000 // 30s
+)
+
+func clampWorkers(w int) int {
+	if w > maxWorkers {
+		return maxWorkers
+	}
+	return w
+}
+
+func clampTimeoutMs(ms int) int {
+	if ms > maxTimeoutMs {
+		return maxTimeoutMs
+	}
+	return ms
+}
+
 // Handler returns the HTTP handler for the scan service: POST /scan, POST /discover.
 func Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -63,11 +85,12 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
+	timeoutMs := clampTimeoutMs(req.TimeoutMs)
+	timeout := time.Duration(timeoutMs) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 500 * time.Millisecond
 	}
-	workers := req.Workers
+	workers := clampWorkers(req.Workers)
 	if workers <= 0 {
 		workers = 500
 	}
@@ -82,17 +105,18 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 
 func resolvePorts(spec string) ([]int, error) {
 	if spec == "" {
-		return defaultScanPorts(), nil
+		spec = "1-1024"
 	}
 	return portscan.ParsePorts(spec)
 }
 
-func defaultScanPorts() []int {
-	ports := make([]int, 0, 1024)
-	for p := 1; p <= 1024; p++ {
-		ports = append(ports, p)
+// resolveDiscoverPorts leaves an empty spec as nil so DiscoverLive applies
+// its own compact discovery port set instead of a full 1-1024 scan sweep.
+func resolveDiscoverPorts(spec string) ([]int, error) {
+	if spec == "" {
+		return nil, nil
 	}
-	return ports
+	return portscan.ParsePorts(spec)
 }
 
 type discoverRequest struct {
@@ -115,16 +139,17 @@ func handleDiscover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	ports, err := resolvePorts(req.Ports)
+	ports, err := resolveDiscoverPorts(req.Ports)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
+	timeoutMs := clampTimeoutMs(req.TimeoutMs)
+	timeout := time.Duration(timeoutMs) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 400 * time.Millisecond
 	}
-	workers := req.Workers
+	workers := clampWorkers(req.Workers)
 	if workers <= 0 {
 		workers = 1000
 	}
