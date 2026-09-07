@@ -80,7 +80,7 @@ Why `internal/svcaudit` / `internal/svcscan` instead of putting handlers directl
 - Consumes: `audit.RunChecks(target string, opt audit.AuditOptions, emit func(audit.Finding), onSkip func(string)) []audit.Finding`, `audit.NewReport(target string, findings []audit.Finding) audit.Report`, `audit.DefaultAuditOptions() audit.AuditOptions` (all existing, unchanged).
 - Produces: `svcaudit.Handler() http.Handler` — later tasks (orchestrator) call this service at `POST /audit` with body `{"target":"host","with_dns":false,"active":false}` and get back `audit.Report` as JSON, or `{"error":"..."}` with 400 on bad input.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // internal/svcaudit/handler_test.go
@@ -145,12 +145,12 @@ func TestAuditHandler_RunsAgainstLoopback(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/svcaudit/...`
 Expected: FAIL — `handler.go` does not exist, `Handler` undefined.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```go
 // internal/svcaudit/handler.go
@@ -237,12 +237,12 @@ func main() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/svcaudit/...`
 Expected: PASS (all 4 tests). `TestAuditHandler_RunsAgainstLoopback` takes a few seconds since it runs real passive checks against 127.0.0.1 — that's expected, not flaky.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/svcaudit cmd/audit-svc
@@ -262,7 +262,7 @@ git commit -m "feat(svc): add audit-svc HTTP microservice wrapping internal/audi
 - Consumes: `portscan.ParsePorts(spec string) ([]int, error)`, `portscan.ScanLive(ctx, portscan.ScanOptions, onProgress, onOpen) portscan.ScanResult`, `portscan.DiscoverLive(ctx, portscan.DiscoverOptions, onPhase, onHost) ([]portscan.HostResult, error)` (all existing, unchanged).
 - Produces: `svcscan.Handler() http.Handler` — orchestrator calls `POST /scan` with `{"host":"1.2.3.4","ports":"1-1024","timeout_ms":500,"workers":500}` → `portscan.ScanResult` JSON; `POST /discover` with `{"cidr":"192.168.1.0/24","timeout_ms":400,"workers":1000}` → `{"hosts":[...portscan.HostResult]}` JSON.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // internal/svcscan/handler_test.go
@@ -337,12 +337,12 @@ func TestDiscoverHandler_RunsOnLoopbackCIDR(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/svcscan/...`
 Expected: FAIL — package/handler does not exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```go
 // internal/svcscan/handler.go
@@ -358,6 +358,11 @@ import (
 
 	"speedtest/internal/portscan"
 )
+
+// maxRequestBody caps the JSON request body svcscan will read — these
+// requests are a handful of short fields, never a legitimate reason to
+// send more.
+const maxRequestBody = 1 << 20 // 1 MiB
 
 // Handler returns the HTTP handler for the scan service: POST /scan, POST /discover.
 func Handler() http.Handler {
@@ -391,6 +396,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	var req scanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -451,6 +457,7 @@ func handleDiscover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	var req discoverRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -497,6 +504,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"speedtest/internal/svcscan"
 )
@@ -506,19 +514,28 @@ func main() {
 	if port == "" {
 		port = "8082"
 	}
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           svcscan.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      3 * time.Minute, // /discover sweeps a whole subnet
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	log.Printf("scan-svc listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, svcscan.Handler()); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/svcscan/...`
 Expected: PASS (all 4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/svcscan cmd/scan-svc
@@ -538,7 +555,7 @@ git commit -m "feat(svc): add scan-svc HTTP microservice wrapping internal/ports
 - Consumes: `cmd/audit-svc`, `cmd/scan-svc` build targets from Task 1/2.
 - Produces: containers reachable at `http://audit-svc:8081` and `http://scan-svc:8082` on the compose network `netsec`, used by the orchestrator's `AUDIT_SVC_URL` / `SCAN_SVC_URL` env vars in Task 4.
 
-- [ ] **Step 1: Write the Dockerfiles**
+- [x] **Step 1: Write the Dockerfiles**
 
 ```dockerfile
 # deploy/docker/audit-svc.Dockerfile
@@ -574,7 +591,7 @@ EXPOSE 8082
 ENTRYPOINT ["/scan-svc"]
 ```
 
-- [ ] **Step 2: Write docker-compose.yml**
+- [x] **Step 2: Write docker-compose.yml**
 
 ```yaml
 # deploy/docker-compose.yml
@@ -600,17 +617,17 @@ networks:
     driver: bridge
 ```
 
-- [ ] **Step 3: Verify the images build (optional — skip if `docker` is not installed)**
+- [x] **Step 3: Verify the images build (optional — skip if `docker` is not installed)**
 
 Run: `docker compose -f deploy/docker-compose.yml build`
 Expected: both images build without error. If `docker` isn't on PATH in this environment, skip this step and note in the task report that the Dockerfiles are written but unverified — correctness of Tasks 1–2 is already covered by `go test ./internal/svcaudit/... ./internal/svcscan/...`.
 
-- [ ] **Step 4: Verify the services respond (optional — skip if `docker` is not installed)**
+- [x] **Step 4: Verify the services respond (optional — skip if `docker` is not installed)**
 
 Run: `docker compose -f deploy/docker-compose.yml up -d && curl -s http://localhost:8081/healthz && curl -s http://localhost:8082/healthz && docker compose -f deploy/docker-compose.yml down`
 Expected: both curls print `ok`. Same skip rule as Step 3.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add deploy/docker deploy/docker-compose.yml
@@ -637,7 +654,7 @@ git commit -m "build(deploy): add Dockerfiles and compose skeleton for audit-svc
 - Consumes: `POST http://<audit-svc>/audit` and `POST http://<scan-svc>/discover` from Tasks 1–2.
 - Produces: `AuditClient.audit(target: str) -> dict`, `ScanClient.discover(cidr: str) -> list[dict]` (used by Task 5's aggregation route), `Storage.save_job(job_id: str, kind: str, result: dict) -> None` / `Storage.get_job(job_id: str) -> dict | None` (used by Task 5).
 
-- [ ] **Step 1: requirements.txt**
+- [x] **Step 1: requirements.txt**
 
 ```
 # orchestrator/requirements.txt
@@ -649,7 +666,7 @@ pytest-asyncio==0.24.0
 respx==0.21.1
 ```
 
-- [ ] **Step 2: Write failing tests**
+- [x] **Step 2: Write failing tests**
 
 ```python
 # orchestrator/tests/conftest.py
@@ -737,12 +754,12 @@ def test_healthz():
     assert resp.json() == {"status": "ok"}
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `cd orchestrator && pip install -r requirements.txt && pytest -v`
 Expected: FAIL — `app.clients`, `app.storage`, `app.main` don't exist yet.
 
-- [ ] **Step 4: Write minimal implementation**
+- [x] **Step 4: Write minimal implementation**
 
 ```python
 # orchestrator/app/models.py
@@ -865,12 +882,12 @@ async def healthz():
 # orchestrator/app/__init__.py
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd orchestrator && pytest -v`
 Expected: PASS (7 tests: 3 clients, 2 storage, 1 healthz — `test_main.py` only has `test_healthz` at this point, wired to real module-level clients/storage which is fine for a smoke test).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add orchestrator
@@ -889,7 +906,7 @@ git commit -m "feat(orchestrator): add FastAPI skeleton with audit/scan HTTP cli
 - Consumes: `AuditClient.audit`, `ScanClient.discover`, `Storage.save_job` / `Storage.get_job` from Task 4.
 - Produces: `POST /jobs/discover-and-audit {"cidr": "..."}` → `{"job_id": "..."}` (202 Accepted, work runs in background); `GET /jobs/{job_id}` → `{"kind": "discover-and-audit", "result": {...}}` or 404. `result` shape: `{"cidr": str, "hosts": [{"ip": str, "audit": <audit.Report dict> | None, "error": str | None}]}`. This is what Task 6's Wazuh forwarder reads. `POST /jobs/discover-and-audit {"cidr": "...", "active": true}` without `"authorized": true` → 403, no job created, no scan runs — intrusive checks (default creds, CVE probing) must not fire without an explicit authorization assertion from the caller.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # orchestrator/tests/test_main.py (append)
@@ -959,12 +976,12 @@ def test_active_with_authorized_is_accepted():
     assert resp.status_code == 202
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd orchestrator && pytest tests/test_main.py -v`
 Expected: FAIL — `/jobs/discover-and-audit` route (404) not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `TestClient` runs `BackgroundTasks` synchronously before returning the response in FastAPI's test mode, so the fetch-right-after-post pattern in the test is safe without added polling.
 
@@ -1030,12 +1047,12 @@ async def get_job(job_id: str):
     return job
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd orchestrator && pytest tests/test_main.py -v`
 Expected: PASS (5 tests: healthz, discover-and-audit happy path, unknown job 404, active-without-authorized 403, active-with-authorized 202).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add orchestrator/app/main.py orchestrator/app/models.py orchestrator/tests/test_main.py
@@ -1061,7 +1078,7 @@ git commit -m "feat(orchestrator): add discover-and-audit background job with au
 
 Wazuh itself (manager + agent containers/install) is external infrastructure, not built by this repo — this task ships the artifacts (decoder, rules, agent config snippet) needed to plug the orchestrator's output into an existing or newly-deployed Wazuh stack, per the [Wazuh custom decoders/rules docs](https://documentation.wazuh.com/current/user-manual/ruleset/custom.html).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # orchestrator/tests/test_wazuh_forward.py
@@ -1125,12 +1142,12 @@ def test_forward_findings_appends_across_calls(tmp_path):
     assert len(lines) == 2
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd orchestrator && pytest tests/test_wazuh_forward.py -v`
 Expected: FAIL — `app.wazuh_forward` doesn't exist.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```python
 # orchestrator/app/wazuh_forward.py
@@ -1163,12 +1180,12 @@ def forward_findings(log_path: str, cidr: str, hosts: list[dict]) -> int:
     return written
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd orchestrator && pytest tests/test_wazuh_forward.py -v`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Wire the forwarder into the discover-and-audit job**
+- [x] **Step 5: Wire the forwarder into the discover-and-audit job**
 
 Edit `orchestrator/app/main.py`:
 
@@ -1203,12 +1220,12 @@ def test_discover_and_audit_job_runs_and_can_be_fetched(tmp_path, monkeypatch):
 
 (keep the rest of that test body unchanged — only the `def` line and the added `monkeypatch.setattr` change).
 
-- [ ] **Step 6: Run the full orchestrator suite**
+- [x] **Step 6: Run the full orchestrator suite**
 
 Run: `cd orchestrator && pytest -v`
 Expected: PASS (all tests, including the updated main test).
 
-- [ ] **Step 7: Write the Wazuh decoder and rules**
+- [x] **Step 7: Write the Wazuh decoder and rules**
 
 ```xml
 <!-- deploy/wazuh/decoder.xml -->
@@ -1252,7 +1269,7 @@ Expected: PASS (all tests, including the updated main test).
 </group>
 ```
 
-Severity numbers (0=Info,1=Low,2=Medium,3=High,4=Critical) come from `internal/audit/audit.go`'s `Severity` enum — check that file's `const` block before changing these field patterns; if the enum grows past Critical=4, extend rule 100103's pattern.
+Severity numbers (0=Info,1=Low,2=Medium,3=High,4=Critical) come from `internal/audit/audit.go`'s `Severity` enum. Note: that enum's `MarshalJSON` emits a **Russian label**, not the int, so `wazuh_forward.py` normalizes the label back to the rank and keeps the original in `severity_label`; the rules match the numeric field. The shipped `rules.xml` also matches `<decoded_as>json</decoded_as>` rather than the custom decoder, since a `log_format json` localfile is already decoded by Wazuh's built-in JSON decoder — check that file's `const` block before changing these field patterns; if the enum grows past Critical=4, extend rule 100103's pattern.
 
 ```xml
 <!-- deploy/wazuh/ossec-localfile-snippet.xml -->
@@ -1265,7 +1282,7 @@ Severity numbers (0=Info,1=Low,2=Medium,3=High,4=Critical) come from `internal/a
 </localfile>
 ```
 
-- [ ] **Step 8: Wire the orchestrator into docker-compose**
+- [x] **Step 8: Wire the orchestrator into docker-compose**
 
 ```dockerfile
 # deploy/docker/orchestrator.Dockerfile
@@ -1289,16 +1306,20 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/audit-svc.Dockerfile
+    # dev-only: loopback-bound host port mapping. Drop this in production —
+    # only the orchestrator (same "netsec" network) should reach this service.
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     networks: [netsec]
 
   scan-svc:
     build:
       context: ..
       dockerfile: deploy/docker/scan-svc.Dockerfile
+    # dev-only: loopback-bound host port mapping. Drop this in production —
+    # only the orchestrator (same "netsec" network) should reach this service.
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     networks: [netsec]
 
   orchestrator:
@@ -1324,12 +1345,12 @@ volumes:
 
 The `findings-log` named volume is what a Wazuh agent container would also mount (read-only) to tail `findings.jsonl` per `ossec-localfile-snippet.xml` — wiring an actual Wazuh manager/agent pair into this compose file is a deployment-environment decision (existing Wazuh cluster vs. new one) left to whoever operates this stack, per the constraint that Wazuh itself isn't built by this repo.
 
-- [ ] **Step 9: Verify the three-service stack builds and answers (optional — skip if `docker` is not installed)**
+- [ ] **Step 9: Verify the three-service stack builds and answers (optional — skip if `docker` is not installed)** — SKIPPED: `docker compose config` validates the file, but the Docker daemon is not running on this machine, so the image build and `/healthz` call are unverified.
 
 Run: `docker compose -f deploy/docker-compose.yml build && docker compose -f deploy/docker-compose.yml up -d && curl -s http://localhost:8000/healthz && docker compose -f deploy/docker-compose.yml down`
 Expected: `{"status":"ok"}`. If `docker` isn't on PATH, skip this and note it as unverified — Tasks 1–2's `go test` and Tasks 4–6's `pytest` already cover the actual logic; this step only proves the container wiring.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add orchestrator/app/wazuh_forward.py orchestrator/tests/test_wazuh_forward.py orchestrator/app/main.py orchestrator/tests/test_main.py deploy/wazuh deploy/docker/orchestrator.Dockerfile deploy/docker-compose.yml
