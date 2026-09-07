@@ -51,6 +51,7 @@ func New() model {
 			newAppsTab(),
 			newHTTPDLTab(cfg.HTTPURL),
 			newAuditTab(cfg.AuditHost),
+			newOrchestratorTab(),
 			newHistoryTab(),
 		},
 		st: newStyles(),
