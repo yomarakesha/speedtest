@@ -1,0 +1,24 @@
+services:
+  audit-svc:
+    build:
+      context: ..
+      dockerfile: deploy/docker/audit-svc.Dockerfile
+    # dev-only: host port mapping. Drop this in production — only the
+    # orchestrator (same "netsec" network) should reach this service.
+    ports:
+      - "8081:8081"
+    networks: [netsec]
+
+  scan-svc:
+    build:
+      context: ..
+      dockerfile: deploy/docker/scan-svc.Dockerfile
+    # dev-only: host port mapping. Drop this in production — only the
+    # orchestrator (same "netsec" network) should reach this service.
+    ports:
+      - "8082:8082"
+    networks: [netsec]
+
+networks:
+  netsec:
+    driver: bridge
