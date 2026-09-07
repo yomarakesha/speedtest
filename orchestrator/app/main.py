@@ -6,12 +6,16 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from app.clients import AuditClient, ScanClient
 from app.models import DiscoverAuditJobRequest
 from app.storage import Storage
+from app.wazuh_forward import forward_findings
 
 app = FastAPI(title="netsec-orchestrator")
 
 audit_client = AuditClient(base_url=os.environ.get("AUDIT_SVC_URL", "http://audit-svc:8081"))
 scan_client = ScanClient(base_url=os.environ.get("SCAN_SVC_URL", "http://scan-svc:8082"))
 storage = Storage(os.environ.get("ORCHESTRATOR_DB", "orchestrator.db"))
+FINDINGS_LOG_PATH = os.environ.get(
+    "FINDINGS_LOG_PATH", "/var/log/netsec-orchestrator/findings.jsonl"
+)
 
 
 @app.get("/healthz")
@@ -38,6 +42,7 @@ async def _run_discover_and_audit(job_id: str, cidr: str, with_dns: bool, active
             hosts_out.append({"ip": ip, "audit": None, "error": str(exc)})
 
     storage.save_job(job_id, "discover-and-audit", {"cidr": cidr, "hosts": hosts_out})
+    forward_findings(FINDINGS_LOG_PATH, cidr, hosts_out)
 
 
 @app.post("/jobs/discover-and-audit", status_code=202)

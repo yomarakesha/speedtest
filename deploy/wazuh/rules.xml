@@ -1,0 +1,38 @@
+<!--
+  deploy/wazuh/rules.xml — install on the Wazuh manager as
+  /var/ossec/etc/rules/netsec-orchestrator_rules.xml, then restart
+  wazuh-manager.
+
+  "severity" is the numeric rank emitted by orchestrator/app/wazuh_forward.py:
+  0=Info, 1=Low, 2=Medium, 3=High, 4=Critical, mirroring the Severity enum in
+  internal/audit/audit.go. That file's MarshalJSON writes a Russian label, so
+  the forwarder normalizes it back to the number these rules match on and keeps
+  the label in "severity_label". If the enum grows past Critical=4, extend rule
+  100103's pattern.
+-->
+<group name="netsec_orchestrator,">
+  <rule id="100100" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="source">netsec-orchestrator</field>
+    <description>Netsec orchestrator finding: $(check) on $(ip)</description>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100101" level="7">
+    <if_sid>100100</if_sid>
+    <field name="severity">^2$</field>
+    <description>Netsec orchestrator: medium-severity finding $(check) on $(ip)</description>
+  </rule>
+
+  <rule id="100102" level="10">
+    <if_sid>100100</if_sid>
+    <field name="severity">^3$</field>
+    <description>Netsec orchestrator: high-severity finding $(check) on $(ip)</description>
+  </rule>
+
+  <rule id="100103" level="12">
+    <if_sid>100100</if_sid>
+    <field name="severity">^[4-9]$</field>
+    <description>Netsec orchestrator: CRITICAL finding $(check) on $(ip) — grade $(grade)</description>
+  </rule>
+</group>

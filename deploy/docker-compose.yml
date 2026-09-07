@@ -19,6 +19,24 @@ services:
       - "127.0.0.1:8082:8082"
     networks: [netsec]
 
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: deploy/docker/orchestrator.Dockerfile
+    depends_on: [audit-svc, scan-svc]
+    # dev-only: loopback-bound. The orchestrator has no authentication yet —
+    # put it behind a reverse proxy with auth before exposing it on a LAN.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - orchestrator-data:/data
+      - findings-log:/var/log/netsec-orchestrator
+    networks: [netsec]
+
 networks:
   netsec:
     driver: bridge
+
+volumes:
+  orchestrator-data:
+  findings-log:

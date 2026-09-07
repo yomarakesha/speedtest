@@ -1,0 +1,21 @@
+<!--
+  deploy/wazuh/decoder.xml — install on the Wazuh manager as
+  /var/ossec/etc/decoders/netsec-orchestrator.xml, then restart wazuh-manager.
+
+  The orchestrator writes findings as JSON lines and the agent tails them with
+  <log_format>json</log_format> (see ossec-localfile-snippet.xml), so Wazuh's
+  built-in JSON decoder already flattens every key — no custom decoder is
+  needed on that path, and rules.xml matches with <decoded_as>json</decoded_as>.
+
+  The decoder below only covers the fallback path where the same lines are
+  shipped through syslog (log_format syslog) with the "netsec-orchestrator"
+  program name; it re-runs the JSON plugin decoder on the message body.
+-->
+<decoder name="netsec-orchestrator">
+  <program_name>^netsec-orchestrator$</program_name>
+</decoder>
+
+<decoder name="netsec-orchestrator-json">
+  <parent>netsec-orchestrator</parent>
+  <plugin_decoder>JSON_Decoder</plugin_decoder>
+</decoder>

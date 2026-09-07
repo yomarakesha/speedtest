@@ -13,7 +13,8 @@ def test_healthz():
 
 
 @respx.mock
-def test_discover_and_audit_job_runs_and_can_be_fetched():
+def test_discover_and_audit_job_runs_and_can_be_fetched(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.main.FINDINGS_LOG_PATH", str(tmp_path / "findings.jsonl"))
     respx.post("http://scan-svc:8082/discover").mock(
         return_value=httpx.Response(200, json={"hosts": [{"ip": "10.0.0.5", "open": []}]})
     )
