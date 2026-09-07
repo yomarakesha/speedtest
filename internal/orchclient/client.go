@@ -51,6 +51,7 @@ type Finding struct {
 	Severity string   `json:"severity"`
 	Title    string   `json:"title"`
 	Detail   string   `json:"detail"`
+	Evidence string   `json:"evidence,omitempty"`
 	Tags     []string `json:"tags,omitempty"`
 }
 

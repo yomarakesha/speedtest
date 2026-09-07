@@ -50,8 +50,9 @@ type orchSubmitMsg struct {
 }
 
 type orchDetailMsg struct {
-	job orchclient.Job
-	err error
+	jobID string
+	job   orchclient.Job
+	err   error
 }
 
 // orchestratorTab drives the Python orchestrator (and, for the health strip,
@@ -102,8 +103,18 @@ func newOrchestratorTab() tab {
 }
 
 func (t *orchestratorTab) Title() string { return "Оркестратор" }
-func (t *orchestratorTab) Init() tea.Cmd { return t.refresh() }
-func (t *orchestratorTab) Busy() bool    { return t.polling }
+
+// Init is called on every tab activation (including switching back to this
+// tab), not just the first. If a submitted job is still being polled,
+// refresh() would reset polling=false and swap t.ch out from under the
+// running startPolling goroutine, silently dropping its progress updates.
+func (t *orchestratorTab) Init() tea.Cmd {
+	if t.polling {
+		return nil
+	}
+	return t.refresh()
+}
+func (t *orchestratorTab) Busy() bool { return t.polling }
 func (t *orchestratorTab) Capturing() bool {
 	return t.view == orchViewForm && t.cidrIn.Focused()
 }
@@ -223,7 +234,7 @@ func (t *orchestratorTab) fetchDetail(jobID string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		job, err := orchclient.GetJob(ctx, cfg.OrchestratorURL, jobID)
-		return orchDetailMsg{job: job, err: err}
+		return orchDetailMsg{jobID: jobID, job: job, err: err}
 	}
 }
 
@@ -269,6 +280,9 @@ func (t *orchestratorTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		return t, t.startPolling(msg.jobID)
 
 	case orchDetailMsg:
+		if msg.jobID != t.detailID {
+			return t, nil // superseded by a newer detail fetch
+		}
 		if msg.err != nil {
 			t.detailErr = msg.err
 			return t, nil
@@ -515,6 +529,9 @@ func (t *orchestratorTab) viewDetail(b *strings.Builder) {
 	fmt.Fprintf(b, "%s  %s\n\n",
 		t.sty.big.Render(res.CIDR),
 		t.sty.muted.Render(fmt.Sprintf("статус: %s, хостов: %d", res.Status, len(res.Hosts))))
+	if res.Error != "" {
+		fmt.Fprintf(b, "%s\n\n", t.sty.bad.Render("Ошибка: "+res.Error))
+	}
 	b.WriteString(t.hostsTbl.View())
 
 	if h := t.selectedHost(); h != nil && h.Audit != nil && len(h.Audit.Findings) > 0 {

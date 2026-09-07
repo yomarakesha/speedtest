@@ -73,3 +73,25 @@ def forward_findings(log_path: str, cidr: str, hosts: list[dict]) -> int:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
                 written += 1
     return written
+
+
+def forward_scan_failure(log_path: str, cidr: str, error: str) -> None:
+    """A whole-CIDR discover() failure never reaches forward_findings (there
+    are no hosts to iterate), but it's a bigger SIEM signal than any single
+    unreachable host inside a working scan — surface it explicitly."""
+    parent = os.path.dirname(log_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    line = {
+        "source": "netsec-orchestrator",
+        "cidr": cidr,
+        "ip": None,
+        "grade": None,
+        "check": "scan.failed",
+        "severity": 3,
+        "severity_label": "высокая",
+        "title": "Не удалось выполнить discover по подсети",
+        "detail": error,
+    }
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")

@@ -24,7 +24,12 @@ class Storage:
     def save_job(self, job_id: str, kind: str, result: dict) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO jobs (job_id, kind, result_json) VALUES (?, ?, ?)",
+                """
+                INSERT INTO jobs (job_id, kind, result_json) VALUES (?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    kind = excluded.kind,
+                    result_json = excluded.result_json
+                """,
                 (job_id, kind, json.dumps(result)),
             )
             conn.commit()

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 
@@ -6,7 +7,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from app.clients import AuditClient, ScanClient
 from app.models import DiscoverAuditJobRequest
 from app.storage import Storage
-from app.wazuh_forward import forward_findings
+from app.wazuh_forward import forward_findings, forward_scan_failure
 
 app = FastAPI(title="netsec-orchestrator")
 
@@ -33,6 +34,10 @@ async def _run_discover_and_audit(job_id: str, cidr: str, with_dns: bool, active
             "discover-and-audit",
             {"status": "error", "cidr": cidr, "hosts": [], "error": str(exc)},
         )
+        # A failed scan is a bigger SIEM signal than any single unreachable
+        # host inside a working one — forward it too, or a total outage on
+        # this CIDR shows up in Wazuh as silence.
+        forward_scan_failure(FINDINGS_LOG_PATH, cidr, str(exc))
         return
 
     for host in hosts:
@@ -61,8 +66,13 @@ async def create_discover_and_audit_job(
     job_id = str(uuid.uuid4())
     # Persisted before the background task starts so GET /jobs/{id} can tell
     # "still running" apart from "no such job" instead of 404ing on both.
-    storage.save_job(
-        job_id, "discover-and-audit", {"status": "pending", "cidr": req.cidr, "hosts": []}
+    # Off-loaded to a thread so this blocking sqlite3 call doesn't stall the
+    # event loop's other in-flight requests.
+    await asyncio.to_thread(
+        storage.save_job,
+        job_id,
+        "discover-and-audit",
+        {"status": "pending", "cidr": req.cidr, "hosts": []},
     )
     background_tasks.add_task(_run_discover_and_audit, job_id, req.cidr, req.with_dns, req.active)
     return {"job_id": job_id}
