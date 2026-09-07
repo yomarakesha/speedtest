@@ -33,6 +33,30 @@ services:
       - findings-log:/var/log/netsec-orchestrator
     networks: [netsec]
 
+  # Opt-in: `docker compose --profile wazuh up` also starts this agent,
+  # which tails findings-log and ships it to a Wazuh manager. This repo
+  # does not ship that manager (see deploy/wazuh/decoder.xml's header) —
+  # point WAZUH_MANAGER_SERVER at an existing one via deploy/.env
+  # (copy deploy/.env.example). Without a reachable manager this container
+  # will just retry enrollment and log connection errors.
+  wazuh-agent:
+    image: wazuh/wazuh-agent:4.14.7
+    restart: unless-stopped
+    profiles: ["wazuh"]
+    environment:
+      - WAZUH_MANAGER_SERVER=${WAZUH_MANAGER_SERVER:-wazuh.manager}
+      - WAZUH_MANAGER_PORT=${WAZUH_MANAGER_PORT:-1514}
+      - WAZUH_REGISTRATION_SERVER=${WAZUH_REGISTRATION_SERVER:-wazuh.manager}
+      - WAZUH_REGISTRATION_PORT=${WAZUH_REGISTRATION_PORT:-1515}
+      - WAZUH_AGENT_NAME=netsec-orchestrator
+      - WAZUH_AGENT_GROUP=${WAZUH_AGENT_GROUP:-default}
+      - WAZUH_REGISTRATION_PASSWORD=${WAZUH_REGISTRATION_PASSWORD:-}
+    volumes:
+      - ./wazuh/agent-ossec.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      - findings-log:/var/log/netsec-orchestrator:ro
+    depends_on: [orchestrator]
+    networks: [netsec]
+
 networks:
   netsec:
     driver: bridge

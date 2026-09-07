@@ -37,6 +37,25 @@ def forward_findings(log_path: str, cidr: str, hosts: list[dict]) -> int:
         for host in hosts:
             report = host.get("audit")
             if not report:
+                error = host.get("error")
+                if not error:
+                    continue
+                # A host that couldn't be audited is itself worth surfacing in
+                # Wazuh — silently dropping it would hide "this host is
+                # unreachable/filtering us" from the SIEM.
+                line = {
+                    "source": "netsec-orchestrator",
+                    "cidr": cidr,
+                    "ip": host["ip"],
+                    "grade": None,
+                    "check": "audit.unreachable",
+                    "severity": 0,
+                    "severity_label": "ошибка",
+                    "title": "Не удалось провести аудит хоста",
+                    "detail": error,
+                }
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                written += 1
                 continue
             for finding in report.get("findings", []):
                 severity = finding.get("severity")

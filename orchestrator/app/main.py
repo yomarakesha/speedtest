@@ -29,7 +29,9 @@ async def _run_discover_and_audit(job_id: str, cidr: str, with_dns: bool, active
         hosts = await scan_client.discover(cidr)
     except Exception as exc:  # noqa: BLE001 - persist the failure, don't crash the background task
         storage.save_job(
-            job_id, "discover-and-audit", {"cidr": cidr, "hosts": [], "error": str(exc)}
+            job_id,
+            "discover-and-audit",
+            {"status": "error", "cidr": cidr, "hosts": [], "error": str(exc)},
         )
         return
 
@@ -41,7 +43,9 @@ async def _run_discover_and_audit(job_id: str, cidr: str, with_dns: bool, active
         except Exception as exc:  # noqa: BLE001 - one host's audit failing shouldn't drop the rest
             hosts_out.append({"ip": ip, "audit": None, "error": str(exc)})
 
-    storage.save_job(job_id, "discover-and-audit", {"cidr": cidr, "hosts": hosts_out})
+    storage.save_job(
+        job_id, "discover-and-audit", {"status": "done", "cidr": cidr, "hosts": hosts_out}
+    )
     forward_findings(FINDINGS_LOG_PATH, cidr, hosts_out)
 
 
@@ -55,8 +59,18 @@ async def create_discover_and_audit_job(
             detail="active=true requires authorized=true — intrusive checks need explicit operator authorization",
         )
     job_id = str(uuid.uuid4())
+    # Persisted before the background task starts so GET /jobs/{id} can tell
+    # "still running" apart from "no such job" instead of 404ing on both.
+    storage.save_job(
+        job_id, "discover-and-audit", {"status": "pending", "cidr": req.cidr, "hosts": []}
+    )
     background_tasks.add_task(_run_discover_and_audit, job_id, req.cidr, req.with_dns, req.active)
     return {"job_id": job_id}
+
+
+@app.get("/jobs")
+async def list_jobs(limit: int = 50):
+    return {"jobs": storage.list_jobs(limit)}
 
 
 @app.get("/jobs/{job_id}")

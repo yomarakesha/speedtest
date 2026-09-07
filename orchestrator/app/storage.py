@@ -38,3 +38,27 @@ class Storage:
             return None
         kind, result_json = row
         return {"kind": kind, "result": json.loads(result_json)}
+
+    def list_jobs(self, limit: int = 50) -> list[dict]:
+        """Newest-first job summaries for a monitoring view — light enough to
+        list regularly, unlike get_job's full per-host result payload."""
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            rows = conn.execute(
+                "SELECT job_id, kind, result_json, created_at FROM jobs "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        out = []
+        for job_id, kind, result_json, created_at in rows:
+            result = json.loads(result_json)
+            out.append(
+                {
+                    "job_id": job_id,
+                    "kind": kind,
+                    "created_at": created_at,
+                    "status": result.get("status"),
+                    "cidr": result.get("cidr"),
+                    "host_count": len(result.get("hosts", [])),
+                }
+            )
+        return out

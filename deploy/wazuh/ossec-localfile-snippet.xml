@@ -1,6 +1,10 @@
 <!-- Add this inside <ossec_config> on the host/container running the
      orchestrator, as a Wazuh agent localfile monitor. The agent needs read
-     access to the findings-log volume mounted by deploy/docker-compose.yml. -->
+     access to the findings-log volume mounted by deploy/docker-compose.yml.
+
+     If you're using the "wazuh-agent" service in that compose file (profile
+     "wazuh"), this block is already baked into agent-ossec.conf — you only
+     need this file standalone when wiring an existing/external agent. -->
 <localfile>
   <log_format>json</log_format>
   <location>/var/log/netsec-orchestrator/findings.jsonl</location>
