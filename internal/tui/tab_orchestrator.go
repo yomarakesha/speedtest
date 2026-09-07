@@ -44,6 +44,13 @@ type orchJobsMsg struct {
 
 type orchPollDoneMsg struct{ ch chan tea.Msg }
 
+type orchJobPollMsg struct {
+	ch    chan tea.Msg
+	jobID string
+	job   orchclient.Job
+	err   error
+}
+
 type orchSubmitMsg struct {
 	jobID string
 	err   error
@@ -195,29 +202,31 @@ func (t *orchestratorTab) submit() tea.Cmd {
 	}
 }
 
-// startPolling watches one just-submitted job by re-listing every 1.5s (there
-// is no GET for a single job's status alone that's cheaper than the list) for
-// up to a minute, or until that job leaves "pending".
+// startPolling watches one just-submitted job for up to a minute, or until it
+// leaves "pending". A single ListJobs call up front seeds the jobs table with
+// the new row (for its CIDR/created_at); after that, each tick uses GetJob —
+// one indexed-row lookup — instead of re-listing and re-decoding every job's
+// full result blob just to read one job's status.
 func (t *orchestratorTab) startPolling(jobID string) tea.Cmd {
 	cfg := t.cfg
 	ch := make(chan tea.Msg, orchPollBufferSize)
 	t.ch = ch
 	t.polling = true
 	go func() {
+		listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		jobs, err := orchclient.ListJobs(listCtx, cfg.OrchestratorURL, 30)
+		listCancel()
+		ch <- orchJobsMsg{ch: ch, jobs: jobs, err: err}
+
 		poll := func() (stillPending bool) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			jobs, err := orchclient.ListJobs(ctx, cfg.OrchestratorURL, 30)
-			ch <- orchJobsMsg{ch: ch, jobs: jobs, err: err}
+			job, err := orchclient.GetJob(ctx, cfg.OrchestratorURL, jobID)
+			ch <- orchJobPollMsg{ch: ch, jobID: jobID, job: job, err: err}
 			if err != nil {
 				return true
 			}
-			for _, j := range jobs {
-				if j.JobID == jobID {
-					return j.Status == "pending"
-				}
-			}
-			return true // not listed yet — keep waiting
+			return job.Result.Status == "pending"
 		}
 		for i := 0; i < 40 && poll(); i++ {
 			time.Sleep(1500 * time.Millisecond)
@@ -225,6 +234,28 @@ func (t *orchestratorTab) startPolling(jobID string) tea.Cmd {
 		ch <- orchPollDoneMsg{ch: ch}
 	}()
 	return listen(ch)
+}
+
+// upsertJobSummary applies one polled job's latest status/host count to
+// t.jobs in place, or inserts it at the front if the seeding ListJobs call
+// hadn't picked it up yet.
+func (t *orchestratorTab) upsertJobSummary(jobID string, job orchclient.Job) {
+	sum := orchclient.JobSummary{
+		JobID:     jobID,
+		Kind:      job.Kind,
+		Status:    job.Result.Status,
+		CIDR:      job.Result.CIDR,
+		HostCount: len(job.Result.Hosts),
+	}
+	for i := range t.jobs {
+		if t.jobs[i].JobID == jobID {
+			sum.CreatedAt = t.jobs[i].CreatedAt
+			t.jobs[i] = sum
+			return
+		}
+	}
+	sum.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
+	t.jobs = append([]orchclient.JobSummary{sum}, t.jobs...)
 }
 
 // fetchDetail loads one job's full per-host results.
@@ -258,6 +289,19 @@ func (t *orchestratorTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 		}
 		t.jobs, t.jobsErr = msg.jobs, msg.err
 		t.refreshJobsRows()
+		if t.polling {
+			return t, listen(t.ch)
+		}
+		return t, nil
+
+	case orchJobPollMsg:
+		if msg.ch != t.ch {
+			return t, nil
+		}
+		if msg.err == nil {
+			t.upsertJobSummary(msg.jobID, msg.job)
+			t.refreshJobsRows()
+		}
 		if t.polling {
 			return t, listen(t.ch)
 		}
@@ -490,7 +534,7 @@ func (t *orchestratorTab) healthLine() string {
 func (t *orchestratorTab) viewForm(b *strings.Builder) {
 	b.WriteString(t.cidrIn.View())
 	b.WriteString("\n")
-	if hint := hostHint(t.sty, t.cidrIn.Value()); hint != "" {
+	if hint := cidrHint(t.sty, t.cidrIn.Value()); hint != "" {
 		b.WriteString(hint)
 	} else {
 		b.WriteString(t.sty.muted.Render("Discover + audit по подсети через оркестратор; находки уедут в Wazuh, если он подключён."))

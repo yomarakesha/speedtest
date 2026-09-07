@@ -95,9 +95,10 @@ type JobSummary struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// Healthz reports whether baseURL's /healthz answers 200 within ctx.
-func Healthz(ctx context.Context, baseURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/healthz", nil)
+// checkStatus performs a request and confirms it returns wantStatus,
+// discarding any response body — shared by calls that don't need one.
+func checkStatus(ctx context.Context, method, url string, wantStatus int) error {
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
 		return err
 	}
@@ -106,10 +107,40 @@ func Healthz(ctx context.Context, baseURL string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != wantStatus {
 		return fmt.Errorf("статус %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// doJSON performs a request and decodes a wantStatus JSON response body into
+// T — the request/response cycle shared by every orchclient call below.
+func doJSON[T any](ctx context.Context, method, url string, body io.Reader, wantStatus int) (T, error) {
+	var out T
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return out, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != wantStatus {
+		return out, apiError(resp)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// Healthz reports whether baseURL's /healthz answers 200 within ctx.
+func Healthz(ctx context.Context, baseURL string) error {
+	return checkStatus(ctx, http.MethodGet, baseURL+"/healthz", http.StatusOK)
 }
 
 // DiscoverAuditRequest is the body of POST /jobs/discover-and-audit.
@@ -133,23 +164,10 @@ func SubmitDiscoverAndAudit(ctx context.Context, baseURL string, req DiscoverAud
 	if err != nil {
 		return "", err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/jobs/discover-and-audit", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted {
-		return "", apiError(resp)
-	}
-	var out struct {
+	out, err := doJSON[struct {
 		JobID string `json:"job_id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	}](ctx, http.MethodPost, baseURL+"/jobs/discover-and-audit", bytes.NewReader(body), http.StatusAccepted)
+	if err != nil {
 		return "", err
 	}
 	return out.JobID, nil
@@ -157,43 +175,15 @@ func SubmitDiscoverAndAudit(ctx context.Context, baseURL string, req DiscoverAud
 
 // GetJob fetches one job's current state.
 func GetJob(ctx context.Context, baseURL, jobID string) (Job, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/jobs/"+jobID, nil)
-	if err != nil {
-		return Job{}, err
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return Job{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Job{}, apiError(resp)
-	}
-	var out Job
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Job{}, err
-	}
-	return out, nil
+	return doJSON[Job](ctx, http.MethodGet, baseURL+"/jobs/"+jobID, nil, http.StatusOK)
 }
 
 // ListJobs fetches the most recent jobs, newest first.
 func ListJobs(ctx context.Context, baseURL string, limit int) ([]JobSummary, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/jobs?limit=%d", baseURL, limit), nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, apiError(resp)
-	}
-	var out struct {
+	out, err := doJSON[struct {
 		Jobs []JobSummary `json:"jobs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	}](ctx, http.MethodGet, fmt.Sprintf("%s/jobs?limit=%d", baseURL, limit), nil, http.StatusOK)
+	if err != nil {
 		return nil, err
 	}
 	return out.Jobs, nil

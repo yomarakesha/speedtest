@@ -45,6 +45,22 @@ func hostHint(s styles, v string) string {
 	return s.bad.Render("⚠ похоже на неверный адрес")
 }
 
+// cidrHint is hostHint's equivalent for a subnet field — flags a value that
+// doesn't parse as CIDR notation (e.g. a bare IP missing its "/24").
+func cidrHint(s styles, v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || validCIDR(v) {
+		return ""
+	}
+	return s.bad.Render("⚠ похоже на неверный CIDR (например 192.168.1.0/24)")
+}
+
+// validCIDR reports whether v parses as CIDR notation.
+func validCIDR(v string) bool {
+	_, _, err := net.ParseCIDR(v)
+	return err == nil
+}
+
 // urlHint is hostHint's equivalent for the HTTP tab's URL field.
 func urlHint(s styles, v string) string {
 	v = strings.TrimSpace(v)
