@@ -43,7 +43,7 @@ Logic: parse MAC allowing `:`, `-`, or no separator (12 hex chars); build 102-by
 
 Tests: `ParseMAC` table test (colon, dash, bare-hex, uppercase, wrong length, bad hex char) and `BuildPacket` byte-layout test (length 102, first 6 bytes `0xFF`, remaining is MAC repeated 16×).
 
-- [ ] Write wol.go + wol_test.go, wire main.go, run gates, commit.
+- [x] Write wol.go + wol_test.go, wire main.go, run gates, commit.
 
 ## Task 2: `speedtest tls <host[:port]>` — TLS certificate inspection
 
@@ -59,7 +59,7 @@ Logic: default port 443 if missing (reuse `ping.NormalizeHost` or local equivale
 
 Tests: pure formatting helpers only (e.g. a `tlsVersionName(uint16) string` table test, SAN-join formatting) — no real `tls.Dial` in tests.
 
-- [ ] Write tlsinfo.go + tlsinfo_test.go, wire main.go, run gates, commit.
+- [x] Write tlsinfo.go + tlsinfo_test.go, wire main.go, run gates, commit.
 
 ## Task 3: `speedtest timing <url>` — HTTP request timing breakdown
 
@@ -75,7 +75,7 @@ Logic: build `httptrace.ClientTrace` with `DNSStart/DNSDone`, `ConnectStart/Conn
 
 Tests: a pure "format stage line" helper test (given a `Result`, output deterministic Russian strings) — no real HTTP call in tests.
 
-- [ ] Write timing.go + timing_test.go, wire main.go, run gates, commit.
+- [x] Write timing.go + timing_test.go, wire main.go, run gates, commit.
 
 ## Task 4: `speedtest info` — local + external network info
 
@@ -94,7 +94,7 @@ Logic: external IP/ISP via `GET http://ip-api.com/json/` (stdlib `net/http`, sho
 
 Tests: pure parsing helpers — `parseProcNetRoute(sampleText) (string, error)` and `parseResolvConf(sampleText) []string`.
 
-- [ ] Write netinfo files, wire main.go, run gates, commit.
+- [x] Write netinfo files, wire main.go, run gates, commit.
 
 ## Task 5: `speedtest dns [--domains ...] [--servers ...]` — resolver comparison
 
@@ -110,7 +110,7 @@ Logic: per server, build a `net.Resolver{PreferGo: true, Dial: func(...) {dial u
 
 Tests: `summarizeDurations([]time.Duration, failures int) (avg, min, max float64)` pure function test.
 
-- [ ] Write dnsbench files, wire main.go, run gates, commit.
+- [x] Write dnsbench files, wire main.go, run gates, commit.
 
 ## Task 6: `speedtest bloat <host>` — bufferbloat test
 
@@ -126,7 +126,7 @@ Logic: reuse `ping.Probe`/`ping.NormalizeHost` (port 80 default, `--port` overri
 
 Tests: `Grade` table test covering boundary values (4.9/5/29.9/30/59.9/60/199.9/200/500).
 
-- [ ] Write bloat files, wire main.go, run gates, commit.
+- [x] Write bloat files, wire main.go, run gates, commit.
 
 ## Task 7: TUI tabs — DNS, Инфо, TLS
 
@@ -141,4 +141,4 @@ Tests: `Grade` table test covering boundary values (4.9/5/29.9/30/59.9/60/199.9/
 
 Logic: follow `tab_httpdl.go` exactly — `tab_tls.go` has a `textinput` for host, Enter starts `tlsinfo.Inspect` in a goroutine streaming one result message; `tab_dns.go` has no input (defaults only), Enter runs `dnsbench.Bench` in a goroutine, renders a table as rows arrive or all at once on completion; `tab_info.go` has no input, runs `netinfo.Gather` automatically on `Init()` (like a one-shot), renders sections (external, interfaces, gateway, DNS, IPv6). Each tab gets a one-line `Title()` ("DNS", "Инфо", "TLS") and a `ShortHelp()`.
 
-- [ ] Write the three tab files, register in app.go, run gates (`go build ./... && go vet ./... && go test ./...`, `gofmt -l .`), commit.
+- [x] Write the three tab files, register in app.go, run gates (`go build ./... && go vet ./... && go test ./...`, `gofmt -l .`), commit.
