@@ -18,6 +18,7 @@ import (
 	"speedtest/internal/trace"
 	"speedtest/internal/tui"
 	"speedtest/internal/webspeed"
+	"speedtest/internal/wol"
 )
 
 const usage = `speedtest - сетевой инструмент (CLI)
@@ -45,6 +46,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
   speedtest httpdl <url|host[:port]> [--duration 10s] [--json]
         Download-тест по HTTP до устройства без агента (качает с его
         HTTP-сервера). Точен только при крупном ответе; upload недоступен.
+
+  speedtest wol <mac> [--ip 255.255.255.255] [--port 9]
+        Разбудить устройство по сети (Wake-on-LAN): отправить magic-пакет
+        на MAC-адрес по UDP-broadcast.
 
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
         Скан TCP-портов одного хоста и список открытых.
@@ -91,6 +96,8 @@ func main() {
 		err = trace.RunTrace(args)
 	case "httpdl":
 		err = webspeed.RunHTTPDL(args)
+	case "wol":
+		err = wol.RunWOL(args)
 	case "scan":
 		err = portscan.RunScan(args)
 	case "discover":
