@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"speedtest/internal/dnsbench"
 	"speedtest/internal/history"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
@@ -66,6 +67,11 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Внешний IP и провайдер, локальные интерфейсы (IP/MAC), шлюз по
         умолчанию, DNS-серверы системы, поддержка IPv6.
 
+  speedtest dns [--domains d1,d2,...] [--servers label=ip,...] [--json]
+        Сравнить скорость ответа нескольких DNS-резолверов (системный,
+        1.1.1.1, 8.8.8.8, 9.9.9.9, 77.88.8.8, AdGuard, OpenDNS) на наборе
+        доменов.
+
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
         Скан TCP-портов одного хоста и список открытых.
 
@@ -119,6 +125,8 @@ func main() {
 		err = timing.RunTiming(args)
 	case "info":
 		err = netinfo.RunInfo(args)
+	case "dns":
+		err = dnsbench.RunDNS(args)
 	case "scan":
 		err = portscan.RunScan(args)
 	case "discover":
