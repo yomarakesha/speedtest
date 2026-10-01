@@ -15,6 +15,7 @@ import (
 	"speedtest/internal/ping"
 	"speedtest/internal/portscan"
 	"speedtest/internal/speedtest"
+	"speedtest/internal/timing"
 	"speedtest/internal/tlsinfo"
 	"speedtest/internal/trace"
 	"speedtest/internal/tui"
@@ -55,6 +56,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
   speedtest tls <host[:port]> [--timeout 5s] [--json]
         Разбор TLS-сертификата: издатель, субъект, срок действия, версия
         TLS, набор шифров, SAN-имена, время рукопожатия.
+
+  speedtest timing <url> [--timeout 10s] [--json]
+        Разбивка времени HTTP-запроса по этапам: DNS, TCP-подключение,
+        TLS handshake, время до первого байта, итог.
 
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
         Скан TCP-портов одного хоста и список открытых.
@@ -105,6 +110,8 @@ func main() {
 		err = wol.RunWOL(args)
 	case "tls":
 		err = tlsinfo.RunTLS(args)
+	case "timing":
+		err = timing.RunTiming(args)
 	case "scan":
 		err = portscan.RunScan(args)
 	case "discover":
