@@ -12,6 +12,7 @@ import (
 	"speedtest/internal/history"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
+	"speedtest/internal/netinfo"
 	"speedtest/internal/ping"
 	"speedtest/internal/portscan"
 	"speedtest/internal/speedtest"
@@ -60,6 +61,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
   speedtest timing <url> [--timeout 10s] [--json]
         Разбивка времени HTTP-запроса по этапам: DNS, TCP-подключение,
         TLS handshake, время до первого байта, итог.
+
+  speedtest info [--json]
+        Внешний IP и провайдер, локальные интерфейсы (IP/MAC), шлюз по
+        умолчанию, DNS-серверы системы, поддержка IPv6.
 
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
         Скан TCP-портов одного хоста и список открытых.
@@ -112,6 +117,8 @@ func main() {
 		err = tlsinfo.RunTLS(args)
 	case "timing":
 		err = timing.RunTiming(args)
+	case "info":
+		err = netinfo.RunInfo(args)
 	case "scan":
 		err = portscan.RunScan(args)
 	case "discover":
