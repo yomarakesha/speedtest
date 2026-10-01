@@ -15,8 +15,14 @@ also available as a scriptable subcommand. The interface is in Russian.
 | **Пинг** / `ping` | TCP-connect latency to **any** device (no agent), gping-style live graph. |
 | **Трейс** / `trace` | Traceroute + continuous per-hop ping (mtr/trippy-style), live loss & RTT. |
 | **HTTP** / `httpdl` | Download speed from any device's own HTTP(S) server — no agent on target. |
+| `wol` | Wake-on-LAN: send a magic packet to wake a sleeping device. |
 | **Скан** / `scan` | TCP port scan of a single host with a live progress bar. |
 | **Обзор** / `discover` | Sweep the local subnet: live hosts, open ports, hostname, MAC, vendor. |
+| **DNS** / `dns` | Compare response time across several DNS resolvers. |
+| **Инфо** / `info` | External IP/ISP, local interfaces, default gateway, DNS servers, IPv6. |
+| **TLS** / `tls` | TLS certificate inspection: issuer, validity, version, cipher, SANs. |
+| `timing` | Per-stage HTTP timing breakdown: DNS, connect, TLS, TTFB, total. |
+| `bloat` | Bufferbloat test: latency increase under load, graded A-F. |
 | **История** / `history` | Every run is saved automatically; trend sparkline + CSV/JSON export. |
 
 ## The TUI dashboard
@@ -25,7 +31,7 @@ also available as a scriptable subcommand. The interface is in Russian.
 speedtest            # launch the full-screen dashboard
 ```
 
-- **Tab / Shift+Tab** or **1-8** — switch tabs, **← →** / **h l** also work.
+- **Tab / Shift+Tab** or **1-9, 0** — switch tabs, **← →** / **h l** also work.
 - **?** — help overlay. **q** / **Ctrl+C** — quit.
 - Each tab drives the same measurement engine as its headless command, so the
   numbers you see live are identical to what `--json` reports.
@@ -83,6 +89,46 @@ Shows per-hop loss and last/avg/best/worst RTT, refreshed every round.
 speedtest httpdl http://192.168.1.10:8080/big.iso --duration 20s
 ```
 Download-only estimate; accurate only against a large response.
+
+### Wake-on-LAN
+```sh
+speedtest wol aa:bb:cc:dd:ee:ff --ip 192.168.1.255
+```
+Sends the magic packet via UDP broadcast; the target's NIC must have WoL enabled.
+
+### TLS certificate inspection
+```sh
+speedtest tls example.com:443 --json
+```
+Connects without verifying the chain so even an expired or self-signed cert can
+be inspected; validity is reported as a separate field.
+
+### HTTP timing breakdown
+```sh
+speedtest timing https://example.com/
+```
+Per-stage breakdown of a single request: DNS, TCP connect, TLS handshake,
+time-to-first-byte, total.
+
+### Network information
+```sh
+speedtest info --json
+```
+External IP/ISP, local interfaces (IP/MAC), default gateway, system DNS
+servers, IPv6 support.
+
+### DNS resolver comparison
+```sh
+speedtest dns --domains ya.ru,github.com --servers Cloudflare=1.1.1.1,Google=8.8.8.8
+```
+Compares response time across the system resolver and well-known public ones.
+
+### Bufferbloat test
+```sh
+speedtest bloat 192.168.1.1 --duration 15s
+```
+Baseline TCP-ping latency, then latency again during a concurrent download;
+grades the increase A-F.
 
 ### Port scan / subnet discovery
 ```sh

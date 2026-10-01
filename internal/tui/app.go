@@ -42,6 +42,9 @@ func New() model {
 			newScanTab(),
 			newDiscoverTab(),
 			newHTTPDLTab(),
+			newDNSTab(),
+			newInfoTab(),
+			newTLSTab(),
 			newHistoryTab(),
 		},
 		st: newStyles(),
@@ -104,6 +107,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.tabs[m.active].Init()
 				}
 			}
+			if msg.String() == "0" && len(m.tabs) >= 10 {
+				m.active = 9
+				m.resizeActive()
+				return m, m.tabs[m.active].Init()
+			}
 		}
 	}
 
@@ -149,7 +157,7 @@ func (m model) helpOverlay() string {
 	b.WriteString("\n")
 	for _, l := range []string{
 		"Tab / Shift+Tab — следующая / предыдущая вкладка",
-		"1-8 — быстрый переход к вкладке",
+		"1-9, 0 — быстрый переход к вкладке",
 		"← → или h l — переключение вкладок",
 		"? — показать/скрыть эту справку",
 		"q или Ctrl+C — выход",
@@ -200,7 +208,7 @@ func (m model) statusBar() string {
 	if m.showHelp {
 		return m.st.statusBar.Render("[?] закрыть справку   [q] выход")
 	}
-	hints := []string{"[Tab] вкладки", "[1-8] переход"}
+	hints := []string{"[Tab] вкладки", "[1-9,0] переход"}
 	if h := m.tabs[m.active].ShortHelp(); len(h) > 0 {
 		hints = append(hints, h...)
 	}
