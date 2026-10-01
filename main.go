@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"speedtest/internal/bloat"
 	"speedtest/internal/dnsbench"
 	"speedtest/internal/history"
 	"speedtest/internal/lan"
@@ -72,6 +73,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
         1.1.1.1, 8.8.8.8, 9.9.9.9, 77.88.8.8, AdGuard, OpenDNS) на наборе
         доменов.
 
+  speedtest bloat <host> [--download-host H] [--duration 10s] [--json]
+        Bufferbloat-тест: задержка в покое и под одновременной
+        HTTP-закачкой, прирост задержки и оценка A-F.
+
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
         Скан TCP-портов одного хоста и список открытых.
 
@@ -127,6 +132,8 @@ func main() {
 		err = netinfo.RunInfo(args)
 	case "dns":
 		err = dnsbench.RunDNS(args)
+	case "bloat":
+		err = bloat.RunBloat(args)
 	case "scan":
 		err = portscan.RunScan(args)
 	case "discover":
