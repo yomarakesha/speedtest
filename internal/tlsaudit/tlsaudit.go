@@ -48,7 +48,20 @@ type Result struct {
 	Versions    []VersionResult `json:"versions"`
 	WeakCiphers []string        `json:"weak_ciphers,omitempty"`
 	Cert        CertInfo        `json:"cert"`
+	CertOK      bool            `json:"cert_ok"`
+	CertError   string          `json:"cert_error,omitempty"`
 	Grade       string          `json:"grade"`
+}
+
+// sanitize strips control characters so a hostile certificate field cannot
+// inject terminal escape sequences when the result is printed.
+func sanitize(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // versionWeak reports whether a TLS version is considered obsolete.
@@ -66,9 +79,11 @@ func weakSignature(a x509.SignatureAlgorithm) bool {
 }
 
 // rate grades a Result. It is pure: F on expired/weak-signature, else demote by
-// obsolete versions, weak ciphers and self-signing.
-func rate(versions []VersionResult, weakCiphers []string, cert CertInfo) string {
-	if cert.Expired || cert.WeakSignature {
+// obsolete versions, weak ciphers and self-signing. When the certificate could
+// not be retrieved (certOK=false) the grade is penalized rather than treating an
+// absent cert as clean — fail closed, not open.
+func rate(versions []VersionResult, weakCiphers []string, cert CertInfo, certOK bool) string {
+	if certOK && (cert.Expired || cert.WeakSignature) {
 		return "F"
 	}
 	score := 100
@@ -78,7 +93,9 @@ func rate(versions []VersionResult, weakCiphers []string, cert CertInfo) string 
 		}
 	}
 	score -= 20 * len(weakCiphers)
-	if cert.SelfSigned {
+	if !certOK {
+		score -= 40 // cannot vouch for a cert we could not read
+	} else if cert.SelfSigned {
 		score -= 20
 	}
 	if score < 0 {
@@ -136,12 +153,16 @@ func Audit(hostport string, timeout time.Duration) (Result, error) {
 		}
 	}
 
-	// Inspect the leaf certificate.
+	// Inspect the leaf certificate. A fetch failure must not be graded as a
+	// clean cert, so record the error and let rate() penalize the unknown.
 	if cert, err := leafCert(hostport, host, timeout); err == nil {
 		res.Cert = certInfo(cert, host)
+		res.CertOK = true
+	} else {
+		res.CertError = sanitize(err.Error())
 	}
 
-	res.Grade = rate(res.Versions, res.WeakCiphers, res.Cert)
+	res.Grade = rate(res.Versions, res.WeakCiphers, res.Cert, res.CertOK)
 	return res, nil
 }
 
@@ -161,7 +182,10 @@ func dialVersion(addr, host string, v uint16, timeout time.Duration) bool {
 	return true
 }
 
-// dialCipher reports whether the server accepts a handshake offering only cipher id.
+// dialCipher reports whether the server accepts a handshake offering only cipher
+// id. Limitation: Go's tls client can only offer the suites it still implements,
+// so a server that accepts a suite Go has dropped entirely cannot be detected
+// here — a clean weak-cipher result is a lower bound, not a guarantee.
 func dialCipher(addr, host string, id uint16, timeout time.Duration) bool {
 	d := &net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{
@@ -198,11 +222,11 @@ func leafCert(addr, host string, timeout time.Duration) (*x509.Certificate, erro
 // certInfo extracts the security-relevant certificate fields.
 func certInfo(cert *x509.Certificate, host string) CertInfo {
 	ci := CertInfo{
-		Subject:       cert.Subject.String(),
-		Issuer:        cert.Issuer.String(),
+		Subject:       sanitize(cert.Subject.String()),
+		Issuer:        sanitize(cert.Issuer.String()),
 		NotAfter:      cert.NotAfter,
 		Expired:       time.Now().After(cert.NotAfter),
-		SignatureAlgo: cert.SignatureAlgorithm.String(),
+		SignatureAlgo: sanitize(cert.SignatureAlgorithm.String()),
 		WeakSignature: weakSignature(cert.SignatureAlgorithm),
 	}
 	// Self-signed: issuer equals subject and it fails to chain to a trusted root.
@@ -280,6 +304,11 @@ func RunTLSAudit(args []string) error {
 		fmt.Printf("  ⚠ Слабые шифры: %s\n", strings.Join(res.WeakCiphers, ", "))
 	} else {
 		fmt.Println("  ✓ Слабые шифры не приняты")
+	}
+	if !res.CertOK {
+		fmt.Printf("  ⚠ Сертификат не получен: %s\n", res.CertError)
+		fmt.Printf("\n  Оценка: %s\n", res.Grade)
+		return nil
 	}
 	fmt.Printf("  Сертификат: %s\n", res.Cert.Subject)
 	fmt.Printf("    Издатель:  %s\n", res.Cert.Issuer)

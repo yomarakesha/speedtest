@@ -43,18 +43,21 @@ func TestRate(t *testing.T) {
 		versions []VersionResult
 		ciphers  []string
 		cert     CertInfo
+		certOK   bool
 		want     string
 	}{
-		{"clean", vers(true, false), nil, good, "A"},
-		{"obsolete TLS1.0", vers(true, true), nil, good, "B"},
-		{"weak cipher", vers(true, false), []string{"RC4"}, good, "B"},
-		{"self-signed", vers(true, false), nil, CertInfo{NotAfter: time.Now().Add(time.Hour), SelfSigned: true}, "B"},
-		{"expired", vers(true, false), nil, CertInfo{Expired: true}, "F"},
-		{"weak signature", vers(true, false), nil, CertInfo{NotAfter: time.Now().Add(time.Hour), WeakSignature: true}, "F"},
-		{"obsolete + 2 weak ciphers", vers(true, true), []string{"RC4", "3DES"}, good, "F"},
+		{"clean", vers(true, false), nil, good, true, "A"},
+		{"obsolete TLS1.0", vers(true, true), nil, good, true, "B"},
+		{"weak cipher", vers(true, false), []string{"RC4"}, good, true, "B"},
+		{"self-signed", vers(true, false), nil, CertInfo{NotAfter: time.Now().Add(time.Hour), SelfSigned: true}, true, "B"},
+		{"expired", vers(true, false), nil, CertInfo{Expired: true}, true, "F"},
+		{"weak signature", vers(true, false), nil, CertInfo{NotAfter: time.Now().Add(time.Hour), WeakSignature: true}, true, "F"},
+		{"obsolete + 2 weak ciphers", vers(true, true), []string{"RC4", "3DES"}, good, true, "F"},
+		{"cert unavailable fails closed", vers(true, false), nil, CertInfo{}, false, "C"},
+		{"expired flag ignored when cert not read", vers(true, false), nil, CertInfo{Expired: true}, false, "C"},
 	}
 	for _, c := range cases {
-		if got := rate(c.versions, c.ciphers, c.cert); got != c.want {
+		if got := rate(c.versions, c.ciphers, c.cert, c.certOK); got != c.want {
 			t.Errorf("%s: rate = %q, want %q", c.name, got, c.want)
 		}
 	}
