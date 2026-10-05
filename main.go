@@ -12,6 +12,7 @@ import (
 	"speedtest/internal/bloat"
 	"speedtest/internal/dnsbench"
 	"speedtest/internal/history"
+	"speedtest/internal/httphdr"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
 	"speedtest/internal/netinfo"
@@ -87,6 +88,11 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Без --cidr подсеть определяется автоматически.
         --all сканирует все адреса (без проверки на живость).
 
+  speedtest headers <url> [--timeout 10s] [--json] [--wazuh]
+        Аудит HTTP-заголовков безопасности (HSTS, CSP, X-Frame-Options,
+        X-Content-Type-Options, Referrer-Policy, Permissions-Policy, cookie)
+        с оценкой A-F. --wazuh пишет находку в лог для Wazuh.
+
   speedtest history [--export csv|json]
         Показать историю замеров (сохраняется автоматически) или выгрузить
         её в CSV/JSON.
@@ -140,6 +146,8 @@ func main() {
 		err = portscan.RunDiscover(args)
 	case "history":
 		err = history.RunHistory(args)
+	case "headers":
+		err = httphdr.RunHeaders(args)
 	case "menu":
 		err = menu.Run()
 	case "-h", "--help", "help":
