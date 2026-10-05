@@ -18,6 +18,7 @@ import (
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
 	"speedtest/internal/netinfo"
+	"speedtest/internal/ntp"
 	"speedtest/internal/ping"
 	"speedtest/internal/portscan"
 	"speedtest/internal/speedtest"
@@ -110,6 +111,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
         известных уязвимых версий. Индикативно, не заменяет полноценный
         сканер уязвимостей.
 
+  speedtest ntp [server] [--timeout 5s] [--max-offset 1s] [--json] [--wazuh]
+        SNTP-проверка: смещение локальных часов и RTT до NTP-сервера
+        (по умолчанию pool.ntp.org), предупреждение при большом смещении.
+
   speedtest history [--export csv|json]
         Показать историю замеров (сохраняется автоматически) или выгрузить
         её в CSV/JSON.
@@ -171,6 +176,8 @@ func main() {
 		err = tlsaudit.RunTLSAudit(args)
 	case "cvecheck":
 		err = cvecheck.RunCVECheck(args)
+	case "ntp":
+		err = ntp.RunNTP(args)
 	case "menu":
 		err = menu.Run()
 	case "-h", "--help", "help":
