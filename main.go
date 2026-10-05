@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"speedtest/internal/bloat"
+	"speedtest/internal/cvecheck"
 	"speedtest/internal/dnsbench"
 	"speedtest/internal/dnssec"
 	"speedtest/internal/history"
@@ -104,6 +105,11 @@ const usage = `speedtest - сетевой инструмент (CLI)
         TLS 1.0/1.1), слабые шифры, срок/самоподпись/слабая подпись
         сертификата, оценка A-F.
 
+  speedtest cvecheck <ip> [--ports ...] [--banner "строка"] [--json] [--wazuh]
+        Сверка версий сервисов (из баннеров) с небольшой встроенной базой
+        известных уязвимых версий. Индикативно, не заменяет полноценный
+        сканер уязвимостей.
+
   speedtest history [--export csv|json]
         Показать историю замеров (сохраняется автоматически) или выгрузить
         её в CSV/JSON.
@@ -163,6 +169,8 @@ func main() {
 		err = dnssec.RunDNSSEC(args)
 	case "tlsaudit":
 		err = tlsaudit.RunTLSAudit(args)
+	case "cvecheck":
+		err = cvecheck.RunCVECheck(args)
 	case "menu":
 		err = menu.Run()
 	case "-h", "--help", "help":

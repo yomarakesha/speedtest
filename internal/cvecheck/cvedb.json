@@ -1,0 +1,66 @@
+[
+  {
+    "product": "apache",
+    "cve": "CVE-2021-41773",
+    "introduced": "2.4.49",
+    "fixed": "2.4.50",
+    "severity": "critical",
+    "description": "path traversal and RCE in mod_cgi"
+  },
+  {
+    "product": "apache",
+    "cve": "CVE-2021-42013",
+    "introduced": "2.4.50",
+    "fixed": "2.4.51",
+    "severity": "critical",
+    "description": "incomplete fix of path traversal (RCE)"
+  },
+  {
+    "product": "vsftpd",
+    "cve": "CVE-2011-2523",
+    "introduced": "2.3.4",
+    "fixed": "2.3.5",
+    "severity": "critical",
+    "description": "backdoor command execution in 2.3.4"
+  },
+  {
+    "product": "openssh",
+    "cve": "CVE-2016-0777",
+    "introduced": "5.4",
+    "fixed": "7.1p2",
+    "severity": "medium",
+    "description": "client roaming information leak"
+  },
+  {
+    "product": "openssh",
+    "cve": "CVE-2018-15473",
+    "introduced": "0",
+    "fixed": "7.7",
+    "severity": "medium",
+    "description": "username enumeration via auth timing"
+  },
+  {
+    "product": "proftpd",
+    "cve": "CVE-2015-3306",
+    "introduced": "1.3.5",
+    "fixed": "1.3.5a",
+    "severity": "critical",
+    "description": "mod_copy arbitrary file read/write (RCE)"
+  },
+  {
+    "product": "exim",
+    "cve": "CVE-2019-10149",
+    "introduced": "4.87",
+    "fixed": "4.92",
+    "severity": "critical",
+    "description": "remote command execution (The Return of the WIZard)"
+  },
+  {
+    "product": "nginx",
+    "cve": "CVE-2019-20372",
+    "introduced": "0",
+    "fixed": "1.17.7",
+    "severity": "medium",
+    "description": "HTTP request smuggling via error_page"
+  }
+]
