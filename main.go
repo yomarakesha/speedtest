@@ -11,6 +11,7 @@ import (
 
 	"speedtest/internal/bloat"
 	"speedtest/internal/dnsbench"
+	"speedtest/internal/dnssec"
 	"speedtest/internal/history"
 	"speedtest/internal/httphdr"
 	"speedtest/internal/lan"
@@ -93,6 +94,10 @@ const usage = `speedtest - сетевой инструмент (CLI)
         X-Content-Type-Options, Referrer-Policy, Permissions-Policy, cookie)
         с оценкой A-F. --wazuh пишет находку в лог для Wazuh.
 
+  speedtest dnssec <domain> [--timeout 8s] [--json] [--wazuh]
+        Аудит DNS-безопасности домена: SPF, DMARC, DKIM, DNSSEC, CAA и
+        проверка разрешённой передачи зоны (AXFR) на NS-серверах.
+
   speedtest history [--export csv|json]
         Показать историю замеров (сохраняется автоматически) или выгрузить
         её в CSV/JSON.
@@ -148,6 +153,8 @@ func main() {
 		err = history.RunHistory(args)
 	case "headers":
 		err = httphdr.RunHeaders(args)
+	case "dnssec":
+		err = dnssec.RunDNSSEC(args)
 	case "menu":
 		err = menu.Run()
 	case "-h", "--help", "help":
