@@ -21,6 +21,7 @@ import (
 	"speedtest/internal/portscan"
 	"speedtest/internal/speedtest"
 	"speedtest/internal/timing"
+	"speedtest/internal/tlsaudit"
 	"speedtest/internal/tlsinfo"
 	"speedtest/internal/trace"
 	"speedtest/internal/tui"
@@ -98,6 +99,11 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Аудит DNS-безопасности домена: SPF, DMARC, DKIM, DNSSEC, CAA и
         проверка разрешённой передачи зоны (AXFR) на NS-серверах.
 
+  speedtest tlsaudit <host[:port]> [--timeout 6s] [--json] [--wazuh]
+        Глубокий TLS-аудит: поддерживаемые версии (с пометкой устаревших
+        TLS 1.0/1.1), слабые шифры, срок/самоподпись/слабая подпись
+        сертификата, оценка A-F.
+
   speedtest history [--export csv|json]
         Показать историю замеров (сохраняется автоматически) или выгрузить
         её в CSV/JSON.
@@ -155,6 +161,8 @@ func main() {
 		err = httphdr.RunHeaders(args)
 	case "dnssec":
 		err = dnssec.RunDNSSEC(args)
+	case "tlsaudit":
+		err = tlsaudit.RunTLSAudit(args)
 	case "menu":
 		err = menu.Run()
 	case "-h", "--help", "help":
