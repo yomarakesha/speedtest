@@ -228,9 +228,11 @@ func output(findings []Finding, host string, asJSON, wazuh bool) error {
 	}
 	anyVuln := false
 	for _, f := range findings {
-		head := f.Banner
+		// Banners are untrusted server output; strip terminal-escape chars.
+		banner := util.SanitizeLine(f.Banner)
+		head := banner
 		if f.Port > 0 {
-			head = fmt.Sprintf("порт %d: %s", f.Port, f.Banner)
+			head = fmt.Sprintf("порт %d: %s", f.Port, banner)
 		}
 		fmt.Println(head)
 		if f.Product == "" {

@@ -53,16 +53,9 @@ type Result struct {
 	Grade       string          `json:"grade"`
 }
 
-// sanitize strips control characters so a hostile certificate field cannot
-// inject terminal escape sequences when the result is printed.
-func sanitize(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, s)
-}
+// sanitize strips control characters (including the C1 range) so a hostile
+// certificate field cannot inject terminal escape sequences when printed.
+func sanitize(s string) string { return util.SanitizeLine(s) }
 
 // versionWeak reports whether a TLS version is considered obsolete.
 func versionWeak(v uint16) bool {

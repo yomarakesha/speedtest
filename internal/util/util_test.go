@@ -68,3 +68,19 @@ func TestMbps(t *testing.T) {
 		t.Errorf("Mbps with zero duration = %v, want 0", got)
 	}
 }
+
+func TestSanitizeLine(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"plain text", "plain text"},
+		{"esc\x1b[31mred", "esc[31mred"},
+		{"tab\tnl\nend", "tabnlend"},
+		{"del\x7fhere", "delhere"},
+		{"c1\u009bCSI", "c1CSI"},
+		{"кириллица ok", "кириллица ok"},
+	}
+	for _, c := range cases {
+		if got := SanitizeLine(c.in); got != c.want {
+			t.Errorf("SanitizeLine(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

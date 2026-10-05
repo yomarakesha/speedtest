@@ -77,3 +77,17 @@ func Mbps(n int64, d time.Duration) float64 {
 	}
 	return float64(n) * 8 / d.Seconds() / 1e6
 }
+
+// SanitizeLine removes characters that could inject terminal escape sequences
+// when untrusted text (a banner, a certificate field, a server-supplied name) is
+// printed. It strips C0 controls (< 0x20), DEL (0x7f) and the C1 control range
+// (0x80–0x9f, which some terminals interpret as single-byte CSI/escape codes),
+// while leaving all other printable Unicode — including Cyrillic — intact.
+func SanitizeLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, s)
+}
