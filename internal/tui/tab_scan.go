@@ -49,7 +49,7 @@ func (t *scanTab) Title() string { return "Скан" }
 func (t *scanTab) Init() tea.Cmd { return textinput.Blink }
 
 func (t *scanTab) ShortHelp() []string {
-	return []string{"[Enter] сканировать порты 1-1024"}
+	return []string{"[Enter] сканировать все порты 1-65535"}
 }
 
 func (t *scanTab) Capturing() bool  { return t.input.Focused() }
@@ -60,7 +60,7 @@ func (t *scanTab) start() tea.Cmd {
 	if host == "" {
 		return nil
 	}
-	ports, err := portscan.ParsePorts("1-1024")
+	ports, err := portscan.ParsePorts("1-65535")
 	if err != nil {
 		return nil
 	}
@@ -135,7 +135,7 @@ func (t *scanTab) View() string {
 			bar(frac, bw, t.sty.accent, t.sty.muted), t.scanned, t.total)
 		b.WriteString(t.openList())
 	} else {
-		b.WriteString(t.sty.muted.Render("Сканирование TCP-портов 1-1024 одного хоста."))
+		b.WriteString(t.sty.muted.Render("Сканирование TCP-портов 1-65535 одного хоста."))
 	}
 
 	return lipgloss.Place(t.w, t.h, lipgloss.Left, lipgloss.Top,

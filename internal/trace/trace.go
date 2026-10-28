@@ -26,6 +26,7 @@ type Options struct {
 	MaxHops  int           // TTL ceiling (default 30)
 	Timeout  time.Duration // per-probe timeout (default 1s)
 	Interval time.Duration // pause between full rounds (default 1s)
+	Rounds   int           // stop after N full rounds (0 = until ctx is canceled)
 }
 
 // Hop is the accumulated statistics for one TTL position on the path.
@@ -94,7 +95,7 @@ func Trace(ctx context.Context, opt Options, cb func([]Hop)) error {
 		cb(snap)
 	}
 
-	for {
+	for round := 1; ; round++ {
 		limit := opt.MaxHops
 		if reachedAt > 0 {
 			limit = reachedAt
@@ -143,6 +144,9 @@ func Trace(ctx context.Context, opt Options, cb func([]Hop)) error {
 			}
 		}
 
+		if opt.Rounds > 0 && round >= opt.Rounds {
+			return nil
+		}
 		select {
 		case <-ctx.Done():
 			return nil

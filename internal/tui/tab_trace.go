@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
+	"speedtest/internal/portscan"
 	"speedtest/internal/trace"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -14,6 +17,14 @@ import (
 
 // traceHopsMsg carries a fresh hop-table snapshot from the engine.
 type traceHopsMsg struct{ hops []trace.Hop }
+
+// traceScanHopMsg carries one hop's completed port scan; traceScanDoneMsg ends
+// the scan phase.
+type traceScanHopMsg struct {
+	ttl int
+	res portscan.ScanResult
+}
+type traceScanDoneMsg struct{}
 
 // traceTab is the trippy/mtr-style hop table: traceroute plus a continuous ping
 // of every hop, refreshing loss and RTT stats live.
@@ -28,6 +39,12 @@ type traceTab struct {
 	cancel  context.CancelFunc
 	hops    []trace.Hop
 	err     error
+
+	scanning  bool
+	scanSpec  string                      // port spec being scanned ("common" / "all")
+	scanDone  int                         // hops scanned so far
+	scanTotal int                         // hops to scan
+	scans     map[int]portscan.ScanResult // ttl -> scan result
 }
 
 func newTraceTab() tab {
@@ -44,7 +61,7 @@ func (t *traceTab) Title() string { return "Трейс" }
 func (t *traceTab) Init() tea.Cmd { return textinput.Blink }
 
 func (t *traceTab) ShortHelp() []string {
-	return []string{"[Enter] старт/стоп", "живые потери и RTT по хопам"}
+	return []string{"[Enter] старт/стоп", "[s] скан хопов (common)", "[a] скан хопов (все порты)"}
 }
 
 func (t *traceTab) Capturing() bool  { return t.input.Focused() }
@@ -86,34 +103,121 @@ func (t *traceTab) stop() {
 	t.input.Focus()
 }
 
+// startScan port-scans every responding hop in the current table concurrently
+// (hops in parallel, each hop's ports in parallel via ScanHost). It stops any
+// live trace first so the tab's channel carries only scan messages.
+func (t *traceTab) startScan(spec string) tea.Cmd {
+	ports, err := portscan.ParsePorts(spec)
+	if err != nil {
+		return nil
+	}
+	if t.running {
+		t.stop()
+	}
+
+	type hopIP struct {
+		ttl int
+		ip  string
+	}
+	seen := map[string]bool{}
+	var queue []hopIP
+	for _, h := range t.hops {
+		if h.Host == "" || seen[h.Host] {
+			continue
+		}
+		seen[h.Host] = true
+		queue = append(queue, hopIP{h.TTL, h.Host})
+	}
+	if len(queue) == 0 {
+		return nil
+	}
+
+	t.scanning = true
+	t.scanSpec = spec
+	t.scanDone = 0
+	t.scanTotal = len(queue)
+	t.scans = map[int]portscan.ScanResult{}
+	t.input.Blur()
+
+	ch := make(chan tea.Msg, 64)
+	t.ch = ch
+	go func() {
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8) // cap concurrent hosts
+		for _, q := range queue {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(q hopIP) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				res := portscan.ScanHost(q.ip, ports, 500*time.Millisecond, 500, true)
+				ch <- traceScanHopMsg{ttl: q.ttl, res: res}
+			}(q)
+		}
+		wg.Wait()
+		ch <- traceScanDoneMsg{}
+	}()
+	return listen(ch)
+}
+
 func (t *traceTab) Update(msg tea.Msg) (tab, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.String() == "enter" {
+		switch msg.String() {
+		case "enter":
+			if t.scanning {
+				return t, nil
+			}
 			if t.running {
 				t.stop()
 				return t, nil
 			}
 			return t, t.start()
+		case "s":
+			// Only as a command key (input blurred, e.g. during a live trace),
+			// never while typing a hostname that contains 's'.
+			if !t.input.Focused() && !t.scanning && len(t.hops) > 0 {
+				return t, t.startScan("common")
+			}
+		case "a":
+			if !t.input.Focused() && !t.scanning && len(t.hops) > 0 {
+				return t, t.startScan("all")
+			}
 		}
 
 	case traceHopsMsg:
-		if t.ch == nil {
+		if t.ch == nil || t.scanning {
 			return t, nil
 		}
 		t.hops = msg.hops
 		return t, listen(t.ch)
+
+	case traceScanHopMsg:
+		if !t.scanning {
+			return t, nil
+		}
+		t.scans[msg.ttl] = msg.res
+		t.scanDone++
+		return t, listen(t.ch)
+
+	case traceScanDoneMsg:
+		t.scanning = false
+		t.input.Focus()
+		return t, nil
 
 	case engineDoneMsg:
 		t.running = false
 		if msg.err != nil {
 			t.err = msg.err
 		}
-		t.input.Focus()
+		// A scan may have stopped the trace; keep focus on the scan phase.
+		if !t.scanning {
+			t.input.Focus()
+		}
 		return t, nil
 	}
 
-	if !t.running {
+	if !t.running && !t.scanning {
 		var cmd tea.Cmd
 		t.input, cmd = t.input.Update(msg)
 		return t, cmd
@@ -131,13 +235,16 @@ func (t *traceTab) View() string {
 		b.WriteString(t.sty.bad.Render("Ошибка: " + t.err.Error()))
 	case t.running || len(t.hops) > 0:
 		state := t.sty.good.Render("● трассировка")
-		if !t.running {
+		switch {
+		case t.scanning:
+			state = t.sty.good.Render(fmt.Sprintf("● скан хопов %s %d/%d", t.scanSpec, t.scanDone, t.scanTotal))
+		case !t.running:
 			state = t.sty.muted.Render("■ стоп")
 		}
 		fmt.Fprintf(&b, "%s  до %s\n\n", state, t.sty.accent.Render(t.host))
 		b.WriteString(t.table())
 	default:
-		b.WriteString(t.sty.muted.Render("Трассировка пути до цели + непрерывный пинг каждого узла:\nпотери и задержка по хопам обновляются вживую (без прав администратора)."))
+		b.WriteString(t.sty.muted.Render("Трассировка пути до цели + непрерывный пинг каждого узла:\nпотери и задержка по хопам обновляются вживую (без прав администратора).\n[s] скан портов каждого узла пути, [a] — все 65535."))
 	}
 
 	return lipgloss.Place(t.w, t.h, lipgloss.Left, lipgloss.Top,
@@ -172,6 +279,32 @@ func (t *traceTab) table() string {
 			h.TTL, t.sty.big.Render(name),
 			lossStyle.Render(fmt.Sprintf("%5.0f%%", h.LossPct)),
 			h.LastMs, h.AvgMs, h.WorstMs)
+
+		if res, ok := t.scans[h.TTL]; ok {
+			b.WriteString(t.hopPorts(res))
+		}
+	}
+	return b.String()
+}
+
+// hopPorts renders one hop's open ports as an indented block under its row.
+func (t *traceTab) hopPorts(res portscan.ScanResult) string {
+	if len(res.Open) == 0 {
+		return "    " + t.sty.muted.Render("открытых портов нет") + "\n"
+	}
+	var b strings.Builder
+	for _, p := range res.Open {
+		svc := p.Service
+		if svc == "" {
+			svc = "-"
+		}
+		line := fmt.Sprintf("%5d  %s", p.Port, svc)
+		if p.Banner != "" {
+			line += "  " + trunc(p.Banner, 40)
+		}
+		b.WriteString("    ")
+		b.WriteString(t.sty.good.Render(line))
+		b.WriteString("\n")
 	}
 	return b.String()
 }
