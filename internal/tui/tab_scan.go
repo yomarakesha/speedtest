@@ -42,11 +42,12 @@ type scanTab struct {
 }
 
 // scanPresets are the port ranges the Scan tab can cycle through with [p].
-// 1-1024 covers well-known services fast; the full range catches high ports
-// (databases, RDP, alt-HTTP like 3306/3389/8080) at the cost of speed.
+// The first entry is the default: the full range catches high ports
+// (databases, RDP, alt-HTTP like 3306/3389/8080); 1-1024 is the fast option
+// covering well-known services only.
 var scanPresets = []struct{ label, spec string }{
-	{"1-1024 (быстро)", "1-1024"},
 	{"1-65535 (все)", "1-65535"},
+	{"1-1024 (быстро)", "1-1024"},
 }
 
 func newScanTab(seed string) tab {
