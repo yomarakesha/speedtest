@@ -29,6 +29,12 @@ type Result struct {
 // minReliableBytes is the smallest transfer we consider meaningful (~2 MiB).
 const minReliableBytes = 2 << 20
 
+// minFetchInterval paces re-fetches of a small URL so a tiny snapshot isn't
+// requested thousands of times a second (rate-limit / self-DoS on low-power
+// cameras). ~50 req/s. A large file or stream fills a fetch on its own and
+// never hits this floor, so real transfers are unaffected.
+const minFetchInterval = 20 * time.Millisecond
+
 // RunHTTPDL is the CLI entry point for `speedtest httpdl <url|host>`.
 func RunHTTPDL(args []string) error {
 	fs := flag.NewFlagSet("httpdl", flag.ContinueOnError)
@@ -83,40 +89,61 @@ func downloadCtx(parent context.Context, url string, maxDur time.Duration, sampl
 	ctx, cancel := context.WithTimeout(parent, maxDur)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return Result{}, err
-	}
-	req.Header.Set("User-Agent", "speedtest/1.0")
-
+	// Reuse one client so repeated fetches keep the connection alive.
 	client := &http.Client{}
 	start := time.Now()
-	resp, err := client.Do(req)
-	if err != nil {
-		return Result{}, fmt.Errorf("подключение: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return Result{}, fmt.Errorf("сервер вернул HTTP %d", resp.StatusCode)
-	}
 
-	var total int64
-	buf := make([]byte, 64*1024)
-	lastN, lastT := int64(0), start
-	for {
-		n, rerr := resp.Body.Read(buf)
-		total += int64(n)
-		if sample != nil {
-			if dt := time.Since(lastT).Seconds(); dt >= 0.1 {
-				sample(float64(total-lastN) * 8 / dt / 1e6)
-				lastN, lastT = total, time.Now()
+	var total, lastN int64
+	lastT := start
+	fetches := 0
+	var firstErr, lastErr error
+
+	// Keep pulling the URL until the deadline. A big file or a continuous
+	// stream (e.g. an MJPEG camera feed) fills the whole window in one fetch;
+	// a small snapshot (e.g. /snapshot.jpg) finishes early, so we re-fetch it
+	// repeatedly and accumulate bytes to get a sustained figure.
+	for ctx.Err() == nil {
+		iterStart := time.Now()
+		got, err := fetchOnce(ctx, client, url, &total, &lastN, &lastT, sample)
+		if err != nil {
+			if fetches == 0 {
+				firstErr = err // couldn't even start: surface it
 			}
+			lastErr = err // a later re-fetch failed (e.g. auth expiry, rate-limit)
+			break
 		}
-		if rerr != nil {
-			break // EOF, deadline (context) or read error: stop and report
+		fetches++
+		if got == 0 {
+			break // server served nothing; avoid a busy loop
+		}
+		// Pace re-fetches (see minFetchInterval). Sleep counts into elapsed, so
+		// the reported Mbps stays honest under this cadence; abort on deadline.
+		if d := minFetchInterval - time.Since(iterStart); d > 0 {
+			select {
+			case <-ctx.Done():
+			case <-time.After(d):
+			}
 		}
 	}
 	elapsed := time.Since(start)
+
+	if total == 0 {
+		if firstErr != nil {
+			return Result{}, firstErr
+		}
+		// Zero bytes across the whole window: the target accepted the connection
+		// but never sent a usable response (hung/firewalled), or returned empty.
+		// Report it as a failure instead of a bogus 0 Mbps "success".
+		return Result{}, fmt.Errorf("нет данных: цель не ответила за %s", maxDur)
+	}
+
+	// Some bytes arrived, but a re-fetch then failed before we gathered a
+	// reliable sample: surface the server error instead of reporting a
+	// misleadingly low speed computed over the aborted window. A large,
+	// already-reliable transfer keeps its result even if a trailing re-fetch errs.
+	if lastErr != nil && total < minReliableBytes {
+		return Result{}, lastErr
+	}
 
 	return Result{
 		URL:          url,
@@ -125,6 +152,49 @@ func downloadCtx(parent context.Context, url string, maxDur time.Duration, sampl
 		DownloadMbps: util.Mbps(total, elapsed),
 		Reliable:     total >= minReliableBytes,
 	}, nil
+}
+
+// fetchOnce downloads the URL once, adding to the shared byte counters and
+// reporting instantaneous throughput via sample. It returns the bytes read this
+// fetch. err is non-nil only on a connect/HTTP failure; EOF and deadline are a
+// normal end of the transfer.
+func fetchOnce(ctx context.Context, client *http.Client, url string, total, lastN *int64, lastT *time.Time, sample func(float64)) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "speedtest/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		// A cancel during connect is just the deadline, not a real error.
+		if ctx.Err() != nil {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("подключение: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("сервер вернул HTTP %d", resp.StatusCode)
+	}
+
+	var got int64
+	buf := make([]byte, 64*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		got += int64(n)
+		*total += int64(n)
+		if sample != nil {
+			if dt := time.Since(*lastT).Seconds(); dt >= 0.1 {
+				sample(float64(*total-*lastN) * 8 / dt / 1e6)
+				*lastN, *lastT = *total, time.Now()
+			}
+		}
+		if rerr != nil {
+			break // EOF, deadline (context) or read error: stop
+		}
+	}
+	return got, nil
 }
 
 // normalizeURL prepends http:// when the argument is a bare host or ip[:port].

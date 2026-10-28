@@ -146,3 +146,5 @@ func (t *infoTab) summary() string {
 
 	return b.String()
 }
+
+func (t *infoTab) Busy() bool { return t.loading }

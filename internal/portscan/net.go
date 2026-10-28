@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os/exec"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,6 +21,63 @@ func reverseDNS(ip string, timeout time.Duration) string {
 		return ""
 	}
 	return strings.TrimSuffix(names[0], ".")
+}
+
+// ResolveTarget turns a scan target into the single address that will actually
+// be scanned. An IP literal is returned unchanged; a name is resolved once, up
+// front, so every port of a scan reaches the same host — a round-robin or CDN
+// name otherwise answers each of the hundreds of dials with a different address
+// — and so callers can show which address the results belong to. IPv4 is
+// preferred; an IPv6 address is used only when the name has no A record.
+func ResolveTarget(ctx context.Context, target string, timeout time.Duration) (string, error) {
+	if net.ParseIP(target) != nil {
+		return target, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", target)
+	if err != nil {
+		return "", fmt.Errorf("не удалось разрешить имя %q: %w", target, err)
+	}
+	for _, ip := range ips {
+		if ip.To4() != nil {
+			return ip.String(), nil
+		}
+	}
+	if len(ips) > 0 {
+		return ips[0].String(), nil
+	}
+	return "", fmt.Errorf("имя %q не разрешается ни в один адрес", target)
+}
+
+// describeTarget labels a scanned host as "name (ip)" so the address behind a
+// name is always visible, and as plain "ip" when the target was already an IP.
+func describeTarget(target, ip string) string {
+	if target == ip {
+		return ip
+	}
+	return target + " (" + ip + ")"
+}
+
+// hostnameFor returns the name to record for a scanned address: the name the
+// caller gave, or a reverse lookup when the caller gave an IP.
+func hostnameFor(target, ip string) string {
+	if target != ip {
+		return target
+	}
+	return reverseDNS(ip, time.Second)
+}
+
+// loopbackWarning returns a note when a name resolved to a loopback address,
+// which means the scan is hitting this machine and not the named host. Local
+// DNS filtering (ad-blockers, Pi-hole, some routers) answers blocked names with
+// 127.0.0.1, and the resulting "open" ports are the scanner's own.
+func loopbackWarning(target, ip string) string {
+	if target == ip || !net.ParseIP(ip).IsLoopback() {
+		return ""
+	}
+	return fmt.Sprintf("ВНИМАНИЕ: %s разрешается в %s (localhost) — DNS подменён, "+
+		"результаты относятся к этой машине, а не к %s.", target, ip, target)
 }
 
 // localCIDR returns the network (in CIDR form, e.g. "192.168.1.0/24") of the
@@ -64,6 +124,24 @@ func preferredSourceIP() (net.IP, error) {
 	return ip, nil
 }
 
+// SplitCIDRs parses a comma/space/tab-separated list of CIDRs into a trimmed,
+// order-preserving, deduplicated slice. Empty entries are dropped. Lets a UI or
+// CLI accept several subnets in one field, e.g. "192.168.20.0/24, 10.0.0.0/24".
+func SplitCIDRs(s string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t'
+	}) {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
 // hostsInCIDR returns every usable host address in a CIDR block. For blocks
 // larger than /16 it returns an error to avoid runaway scans.
 func hostsInCIDR(cidr string) ([]string, error) {
@@ -91,6 +169,153 @@ func hostsInCIDR(cidr string) ([]string, error) {
 	return hosts, nil
 }
 
+// IfaceInfo describes one up, non-loopback interface and an IPv4 subnet it owns.
+type IfaceInfo struct {
+	Name string
+	IP   string
+	CIDR string
+}
+
+// localInterfaces returns every usable IPv4 subnet the machine is directly
+// attached to, one entry per interface address. Down, loopback, link-local and
+// non-IPv4 addresses are skipped.
+func localInterfaces() []IfaceInfo {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []IfaceInfo
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifi.Addrs()
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip4 := ipnet.IP.To4()
+			if ip4 == nil || ip4.IsLinkLocalUnicast() {
+				continue
+			}
+			cidr := (&net.IPNet{IP: ip4.Mask(ipnet.Mask), Mask: ipnet.Mask}).String()
+			out = append(out, IfaceInfo{Name: ifi.Name, IP: ip4.String(), CIDR: cidr})
+		}
+	}
+	return out
+}
+
+// localSubnets returns the deduplicated set of IPv4 subnets worth sweeping:
+// every directly-attached interface subnet plus any extra on-link subnets from
+// the routing table (other VLANs / interfaces). Each is capped at /16 by
+// hostsInCIDR; the result is sorted for stable output.
+func localSubnets() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(cidr string) {
+		if cidr == "" || seen[cidr] {
+			return
+		}
+		if _, err := hostsInCIDR(cidr); err != nil {
+			return // too large, non-IPv4, or malformed
+		}
+		seen[cidr] = true
+		out = append(out, cidr)
+	}
+	for _, ifi := range localInterfaces() {
+		add(ifi.CIDR)
+	}
+	for _, cidr := range routedSubnets() {
+		add(cidr)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// routedSubnets parses the OS routing table for extra on-link IPv4 subnets.
+// Best-effort: returns nil if the routing tool is missing or output can't be
+// parsed, in which case callers fall back to interface subnets alone.
+func routedSubnets() []string {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("route", "print", "-4")
+	case "linux":
+		cmd = exec.Command("ip", "-4", "route")
+	default:
+		return nil // macOS/BSD netstat output is abbreviated; skip
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	return parseRoutes(string(out), runtime.GOOS)
+}
+
+// parseRoutes extracts candidate IPv4 subnet CIDRs from routing-table output.
+// Windows rows are "dest netmask gateway iface metric"; Linux `ip route` rows
+// begin with a CIDR (or "default"). Uninteresting routes are dropped.
+func parseRoutes(text, goos string) []string {
+	var out []string
+	for line := range strings.SplitSeq(text, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		var cidr string
+		if goos == "windows" {
+			cidr = routeToCIDR(f[0], f[1])
+		} else if strings.Contains(f[0], "/") {
+			cidr = f[0]
+		}
+		if usefulSubnet(cidr) {
+			out = append(out, cidr)
+		}
+	}
+	return out
+}
+
+// routeToCIDR turns a dotted destination + dotted netmask into a CIDR string,
+// or "" if either is not a valid IPv4 address/mask.
+func routeToCIDR(dest, mask string) string {
+	dip := net.ParseIP(dest).To4()
+	mip := net.ParseIP(mask).To4()
+	if dip == nil || mip == nil {
+		return ""
+	}
+	m := net.IPMask(mip)
+	ones, bits := m.Size()
+	if bits != 32 { // non-contiguous mask
+		return ""
+	}
+	return fmt.Sprintf("%s/%d", dip.Mask(m).String(), ones)
+}
+
+// usefulSubnet reports whether a CIDR is a real, scannable LAN subnet (not a
+// default route, host route, loopback, link-local or multicast block).
+func usefulSubnet(cidr string) bool {
+	if cidr == "" {
+		return false
+	}
+	ip, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return false
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	ones, _ := ipnet.Mask.Size()
+	if ones == 0 || ones >= 31 { // default route or host route
+		return false
+	}
+	if ip4[0] == 127 || ip4[0] >= 224 || (ip4[0] == 169 && ip4[1] == 254) {
+		return false
+	}
+	return true
+}
+
 func cloneIP(ip net.IP) net.IP {
 	c := make(net.IP, len(ip))
 	copy(c, ip)
@@ -104,4 +329,39 @@ func incIP(ip net.IP) {
 			break
 		}
 	}
+}
+
+func decIP(ip net.IP) {
+	for i := len(ip) - 1; i >= 0; i-- {
+		ip[i]--
+		if ip[i] != 0xff {
+			break
+		}
+	}
+}
+
+// routerGuesses returns the two addresses most likely to be the gateway of a
+// subnet: the first host (network+1, e.g. .1) and the last host (broadcast-1,
+// e.g. .254). Used as SNMP probe targets during --expand. Returns nil for
+// prefixes too small to hold hosts.
+func routerGuesses(cidr string) []string {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil
+	}
+	base := ipnet.IP.Mask(ipnet.Mask).To4()
+	if base == nil {
+		return nil
+	}
+	if ones, bits := ipnet.Mask.Size(); bits-ones < 2 {
+		return nil
+	}
+	first := cloneIP(base)
+	incIP(first)
+	last := cloneIP(base)
+	for i := range last {
+		last[i] |= ^ipnet.Mask[i]
+	}
+	decIP(last) // broadcast-1
+	return []string{first.String(), last.String()}
 }

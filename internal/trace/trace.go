@@ -155,6 +155,51 @@ func Trace(ctx context.Context, opt Options, cb func([]Hop)) error {
 	}
 }
 
+// TraceOnce walks the path to opt.Host a single time (no continuous re-probing)
+// and returns the hops in TTL order. It stops as soon as the destination replies
+// or MaxHops is reached. Reverse DNS is skipped — callers that only need the hop
+// IPs (e.g. subnet discovery) pay nothing for name lookups. A hop that timed out
+// has an empty Host.
+func TraceOnce(ctx context.Context, opt Options) ([]Hop, error) {
+	if opt.MaxHops <= 0 {
+		opt.MaxHops = 30
+	}
+	if opt.Timeout <= 0 {
+		opt.Timeout = time.Second
+	}
+
+	ipAddr, err := net.ResolveIPAddr("ip4", opt.Host)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось разрешить %q: %w", opt.Host, err)
+	}
+	dst := ipAddr.IP
+
+	var hops []Hop
+	for ttl := 1; ttl <= opt.MaxHops; ttl++ {
+		select {
+		case <-ctx.Done():
+			return hops, ctx.Err()
+		default:
+		}
+
+		r := probeHop(dst, ttl, opt.Timeout)
+		h := Hop{TTL: ttl, Sent: 1}
+		if r.err == nil && r.from != nil {
+			ms := r.rtt.Seconds() * 1000
+			h.Host = r.from.String()
+			h.Recv = 1
+			h.LastMs, h.AvgMs, h.BestMs, h.WorstMs = ms, ms, ms, ms
+		} else {
+			h.LossPct = 100
+		}
+		hops = append(hops, h)
+		if r.reached {
+			break
+		}
+	}
+	return hops, nil
+}
+
 // resolver does best-effort reverse DNS in the background so the probe loop
 // never blocks on it. Results are cached by IP.
 type resolver struct {

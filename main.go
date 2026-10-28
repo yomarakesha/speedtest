@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"os"
 
+	"speedtest/internal/audit"
 	"speedtest/internal/bloat"
+	"speedtest/internal/bwmon"
+	"speedtest/internal/capture"
 	"speedtest/internal/cvecheck"
 	"speedtest/internal/dnsbench"
 	"speedtest/internal/dnssec"
@@ -17,6 +20,7 @@ import (
 	"speedtest/internal/httphdr"
 	"speedtest/internal/lan"
 	"speedtest/internal/menu"
+	"speedtest/internal/monitor"
 	"speedtest/internal/netinfo"
 	"speedtest/internal/ntp"
 	"speedtest/internal/ping"
@@ -25,9 +29,10 @@ import (
 	"speedtest/internal/timing"
 	"speedtest/internal/tlsaudit"
 	"speedtest/internal/tlsinfo"
-	"speedtest/internal/trace"
+	"speedtest/internal/tracecli"
 	"speedtest/internal/tui"
 	"speedtest/internal/webspeed"
+	"speedtest/internal/wifi"
 	"speedtest/internal/wol"
 )
 
@@ -83,14 +88,65 @@ const usage = `speedtest - сетевой инструмент (CLI)
         HTTP-закачкой, прирост задержки и оценка A-F.
 
   speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
-        Скан TCP-портов одного хоста и список открытых.
+                      [--banner]
+        Скан TCP-портов одного хоста и список открытых. С --banner
+        снимает баннер сервиса с каждого открытого порта (версия ПО).
 
-  speedtest discover [--cidr 192.168.1.0/24] [--ports 22,80,443,...]
+  speedtest discover [--cidr 192.168.1.0/24[,10.0.0.0/24,...]] [--ports 22,80,...]
                      [--timeout 400ms] [--workers 1000] [--all] [--json]
+                     [--all-subnets] [--expand [--expand-depth 2] [--snmp-community public]]
         Обзор подсети: проверка живых хостов, затем открытые порты по каждому,
         плюс имя (обратный DNS), MAC и производитель (из таблицы ARP).
-        Без --cidr подсеть определяется автоматически.
+        Без --cidr подсеть определяется автоматически; --cidr принимает список
+        через запятую.
         --all сканирует все адреса (без проверки на живость).
+        --all-subnets обходит все подсети машины (все интерфейсы + маршруты).
+        --expand авто-обнаруживает подсети (traceroute + SNMP) и сканирует их
+        рекурсивно до --expand-depth хопов; --snmp-community включает опрос
+        таблицы маршрутов шлюзов (без него — только traceroute).
+
+  speedtest wifi [--json]
+        Обзор Wi-Fi: текущее подключение (SSID, сигнал, канал), сети поблизости
+        и совет по наименее загруженному каналу 2.4 ГГц. Трафик отдельных
+        клиентов не показывается (нужен режим монитора адаптера).
+
+  speedtest bwmon [--interval 2s] [--count N] [--json]
+        Живая пропускная способность интерфейсов ЭТОЙ машины (приём/передача
+        по каждому адаптеру). Показывает только собственный трафик хоста.
+
+  speedtest sniff [--iface NAME] [--top 15] [--resolve] [--list] [--json]
+        Пассивный топ собеседников по объёму трафика (кто больше «общается»).
+        Требует сборки с -tags pcap и установленного Npcap (Windows) / libpcap.
+        В коммутируемой сети виден в основном свой трафик + широковещание;
+        для полной картины нужен SPAN-порт или режим монитора Wi-Fi.
+
+  speedtest monitor init [--config monitor.yaml]
+        Создать пример конфига мониторинга (проверки + получатели алертов).
+
+  speedtest monitor check [--config monitor.yaml]
+        Один проход всех проверок из конфига; алерты в stdout/webhook/
+        десктоп/историю. Ненулевой код возврата при нарушении порога
+        (удобно для cron/CI).
+
+  speedtest monitor run [--config monitor.yaml]
+        Непрерывный мониторинг: каждая проверка (ping/portdrift/auditgrade/
+        bandwidth) опрашивается по своему интервалу; алерт при превышении
+        порога, изменении набора портов или падении оценки. Ctrl-C — стоп.
+
+  speedtest audit <host> [--timeout 8s] [--json] [--export html] [--dns]
+        Полный аудит хоста: находит ВСЕ веб-сервисы (80/443/3000/8000/8080/
+        9000/... а не только 443) и по каждому — TLS, HTTP-заголовки, открытые
+        пути; плюс чувствительные порты (telnet/SMB/RDP/БД). Оценка A–F.
+        --export html выводит автономный HTML-отчёт. Прогоны пишутся в history.
+        --dns добавляет проверку DNS: открытый резолвер и перенос зоны (AXFR).
+        --i-have-authorization включает АКТИВНЫЕ проверки (дефолт-креды,
+        незащищённые сервисы Redis/Mongo/FTP, CVE по баннеру) — только для
+        систем, которые вам разрешено тестировать.
+
+  speedtest httpaudit <url> [--timeout 10s] [--json]
+        Аудит HTTP-заголовков безопасности: HSTS, CSP, X-Frame-Options,
+        X-Content-Type-Options, Referrer-Policy, флаги cookie и утечка
+        версии в Server. Итог — оценка A–F.
 
   speedtest headers <url> [--timeout 10s] [--json] [--wazuh]
         Аудит HTTP-заголовков безопасности (HSTS, CSP, X-Frame-Options,
@@ -147,7 +203,7 @@ func main() {
 	case "ping":
 		err = ping.RunPing(args)
 	case "trace":
-		err = trace.RunTrace(args)
+		err = tracecli.RunTrace(args)
 	case "httpdl":
 		err = webspeed.RunHTTPDL(args)
 	case "wol":
@@ -166,6 +222,18 @@ func main() {
 		err = portscan.RunScan(args)
 	case "discover":
 		err = portscan.RunDiscover(args)
+	case "wifi":
+		err = wifi.RunWiFi(args)
+	case "bwmon":
+		err = bwmon.RunBWMon(args)
+	case "sniff":
+		err = capture.RunSniff(args)
+	case "monitor":
+		err = monitor.RunMonitor(args)
+	case "audit":
+		err = audit.RunAudit(args)
+	case "httpaudit":
+		err = audit.RunHTTPAudit(args)
 	case "history":
 		err = history.RunHistory(args)
 	case "headers":

@@ -1,4 +1,4 @@
-package trace
+package tracecli
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"speedtest/internal/portscan"
+	"speedtest/internal/trace"
 	"speedtest/internal/util"
 )
 
@@ -60,11 +61,11 @@ func RunTrace(args []string) error {
 		*rounds = 3
 	}
 
-	var latest []Hop
+	var latest []trace.Hop
 	roundLen := 0
 	printed := false
 
-	cb := func(hops []Hop) {
+	cb := func(hops []trace.Hop) {
 		latest = hops
 		if *asJSON {
 			return
@@ -78,7 +79,7 @@ func RunTrace(args []string) error {
 		printed = true
 	}
 
-	if err := Trace(ctx, Options{
+	if err := trace.Trace(ctx, trace.Options{
 		Host: host, MaxHops: *maxHops, Timeout: *timeout, Interval: *interval, Rounds: *rounds,
 	}, cb); err != nil {
 		return err
@@ -103,7 +104,7 @@ type hopScan struct {
 // scanHops port-scans every responding hop concurrently (the hops themselves in
 // parallel; each hop's ports in parallel via ScanHost) and prints a combined
 // trace+scan report, so the open ports of each node on the path show at once.
-func scanHops(ctx context.Context, target string, hops []Hop, ports []int, spec string, timeout time.Duration, workers int, asJSON bool) error {
+func scanHops(ctx context.Context, target string, hops []trace.Hop, ports []int, spec string, timeout time.Duration, workers int, asJSON bool) error {
 	// Unique responding IPs, in path order; the destination counts as a hop too.
 	seen := map[string]bool{}
 	type hopIP struct {
@@ -175,7 +176,7 @@ func scanHops(ctx context.Context, target string, hops []Hop, ports []int, spec 
 }
 
 // printTable renders the hop table and returns the number of rows printed.
-func printTable(host string, hops []Hop) int {
+func printTable(host string, hops []trace.Hop) int {
 	fmt.Printf("ТРАССИРОВКА до %s\n", host)
 	fmt.Printf("%-4s %-32s %6s %8s %8s %8s %7s\n",
 		"Хоп", "Хост", "Потери", "Посл", "Сред", "Лучш", "Худш")

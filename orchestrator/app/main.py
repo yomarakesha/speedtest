@@ -1,0 +1,91 @@
+import asyncio
+import os
+import uuid
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+
+from app.clients import AuditClient, ScanClient
+from app.models import DiscoverAuditJobRequest
+from app.storage import Storage
+from app.wazuh_forward import forward_findings, forward_scan_failure
+
+app = FastAPI(title="netsec-orchestrator")
+
+audit_client = AuditClient(base_url=os.environ.get("AUDIT_SVC_URL", "http://audit-svc:8081"))
+scan_client = ScanClient(base_url=os.environ.get("SCAN_SVC_URL", "http://scan-svc:8082"))
+storage = Storage(os.environ.get("ORCHESTRATOR_DB", "orchestrator.db"))
+FINDINGS_LOG_PATH = os.environ.get(
+    "FINDINGS_LOG_PATH", "/var/log/netsec-orchestrator/findings.jsonl"
+)
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
+async def _run_discover_and_audit(job_id: str, cidr: str, with_dns: bool, active: bool) -> None:
+    hosts_out = []
+    try:
+        hosts = await scan_client.discover(cidr)
+    except Exception as exc:  # noqa: BLE001 - persist the failure, don't crash the background task
+        storage.save_job(
+            job_id,
+            "discover-and-audit",
+            {"status": "error", "cidr": cidr, "hosts": [], "error": str(exc)},
+        )
+        # A failed scan is a bigger SIEM signal than any single unreachable
+        # host inside a working one — forward it too, or a total outage on
+        # this CIDR shows up in Wazuh as silence.
+        forward_scan_failure(FINDINGS_LOG_PATH, cidr, str(exc))
+        return
+
+    for host in hosts:
+        ip = host["ip"]
+        try:
+            report = await audit_client.audit(ip, with_dns=with_dns, active=active)
+            hosts_out.append({"ip": ip, "audit": report, "error": None})
+        except Exception as exc:  # noqa: BLE001 - one host's audit failing shouldn't drop the rest
+            hosts_out.append({"ip": ip, "audit": None, "error": str(exc)})
+
+    storage.save_job(
+        job_id, "discover-and-audit", {"status": "done", "cidr": cidr, "hosts": hosts_out}
+    )
+    forward_findings(FINDINGS_LOG_PATH, cidr, hosts_out)
+
+
+@app.post("/jobs/discover-and-audit", status_code=202)
+async def create_discover_and_audit_job(
+    req: DiscoverAuditJobRequest, background_tasks: BackgroundTasks
+):
+    if req.active and not req.authorized:
+        raise HTTPException(
+            status_code=403,
+            detail="active=true requires authorized=true — intrusive checks need explicit operator authorization",
+        )
+    job_id = str(uuid.uuid4())
+    # Persisted before the background task starts so GET /jobs/{id} can tell
+    # "still running" apart from "no such job" instead of 404ing on both.
+    # Off-loaded to a thread so this blocking sqlite3 call doesn't stall the
+    # event loop's other in-flight requests.
+    await asyncio.to_thread(
+        storage.save_job,
+        job_id,
+        "discover-and-audit",
+        {"status": "pending", "cidr": req.cidr, "hosts": []},
+    )
+    background_tasks.add_task(_run_discover_and_audit, job_id, req.cidr, req.with_dns, req.active)
+    return {"job_id": job_id}
+
+
+@app.get("/jobs")
+async def list_jobs(limit: int = 50):
+    return {"jobs": storage.list_jobs(limit)}
+
+
+@app.get("/jobs/{job_id}")
+async def get_job(job_id: str):
+    job = storage.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job

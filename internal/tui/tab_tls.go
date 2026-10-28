@@ -147,3 +147,5 @@ func (t *tlsTab) certView() string {
 	}
 	return b.String()
 }
+
+func (t *tlsTab) Busy() bool { return t.running }

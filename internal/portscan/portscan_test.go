@@ -72,6 +72,9 @@ func TestVendorForMAC(t *testing.T) {
 	}{
 		{"00-14-51-aa-bb-cc", "Apple"},
 		{"b8:27:eb:11:22:33", "RaspberryPi"},
+		{"c0:74:ad:34:c6:56", "Ubiquiti"},
+		{"00:0b:82:fd:6b:8b", "Grandstream"},
+		{"AC:18:26:00:11:22", "Hikvision"}, // was unreachable (7-char key bug)
 		{"ff:ff:ff:00:00:00", ""},
 		{"short", ""},
 	}

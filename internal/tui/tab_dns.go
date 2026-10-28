@@ -115,3 +115,5 @@ func (t *dnsTab) table() string {
 	}
 	return b.String()
 }
+
+func (t *dnsTab) Busy() bool { return t.running }
