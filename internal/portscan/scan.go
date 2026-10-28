@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -66,6 +67,7 @@ func scanHost(host string, ports []int, timeout time.Duration, workers int) []in
 type PortInfo struct {
 	Port    int    `json:"port"`
 	Service string `json:"service,omitempty"`
+	Banner  string `json:"banner,omitempty"`
 }
 
 // ScanResult is the outcome of scanning a single host.
@@ -75,58 +77,136 @@ type ScanResult struct {
 	Open     []PortInfo `json:"open"`
 }
 
-// RunScan is the CLI entry point for `speedtest scan <ip>`.
+// RunScan is the CLI entry point for `speedtest scan <ip|cidr|range>`.
 func RunScan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
-	portSpec := fs.String("ports", "1-1024", "ports to scan (e.g. 22,80,443 or 1-65535)")
+	portSpec := fs.String("ports", "1-1024", "ports: 22,80 | 1-65535 | all | common | web | db | ...")
 	timeout := fs.Duration("timeout", 500*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 500, "concurrent connections")
+	banner := fs.Bool("banner", false, "identify services (banner / HTTP Server / TLS cert)")
 	asJSON := fs.Bool("json", false, "output result as JSON")
 	pos, err := util.ParseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) == 0 {
-		return fmt.Errorf("использование: speedtest scan <ip> [--ports ...]")
+		return fmt.Errorf("использование: speedtest scan <ip|cidr|диапазон> [--ports ...] [--banner]\nпресеты портов: %s",
+			strings.Join(PresetNames(), ", "))
 	}
-	target := pos[0]
 
 	ports, err := parsePorts(*portSpec)
 	if err != nil {
 		return err
 	}
-
-	if !*asJSON {
-		fmt.Printf("Сканирую %s  (портов: %d, таймаут %s)\n", target, len(ports), *timeout)
-	}
-	start := time.Now()
-	open := scanHost(target, ports, *timeout, *workers)
-	elapsed := time.Since(start)
-
-	res := ScanResult{
-		Host:     target,
-		Hostname: reverseDNS(target, time.Second),
-		Open:     toPortInfos(open),
+	var targets []string
+	for _, p := range pos {
+		hs, err := ExpandTargets(p)
+		if err != nil {
+			return err
+		}
+		targets = append(targets, hs...)
 	}
 
+	var all []ScanResult
+	for _, target := range targets {
+		if !*asJSON {
+			fmt.Printf("Сканирую %s  (портов: %d, таймаут %s)\n", target, len(ports), *timeout)
+		}
+		start := time.Now()
+		open := scanHost(target, ports, *timeout, *workers)
+		elapsed := time.Since(start)
+
+		res := ScanResult{
+			Host:     target,
+			Hostname: reverseDNS(target, time.Second),
+			Open:     toPortInfos(open),
+		}
+		if *banner {
+			AddBanners(target, res.Open, 2*time.Second)
+		}
+		all = append(all, res)
+		if !*asJSON {
+			printScan(res, elapsed)
+		}
+	}
 	if *asJSON {
-		return printJSON(res)
+		if len(all) == 1 {
+			return printJSON(all[0])
+		}
+		return printJSON(all)
 	}
+	return nil
+}
 
+// ScanHost scans one host's ports and returns the result, with reverse DNS and
+// optional banner grabbing. It is the programmatic entry point reused by other
+// subcommands (e.g. `trace --scan`).
+func ScanHost(host string, ports []int, timeout time.Duration, workers int, banner bool) ScanResult {
+	res := ScanResult{
+		Host:     host,
+		Hostname: reverseDNS(host, time.Second),
+		Open:     toPortInfos(scanHost(host, ports, timeout, workers)),
+	}
+	if banner {
+		AddBanners(host, res.Open, 2*time.Second)
+	}
+	return res
+}
+
+// AddBanners fills Banner for every open port concurrently, capped so a host
+// with thousands of open ports cannot burst thousands of TLS/HTTP dials at once.
+func AddBanners(host string, open []PortInfo, timeout time.Duration) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 100)
+	for i := range open {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			open[i].Banner = GrabBanner(host, open[i].Port, timeout)
+		}(i)
+	}
+	wg.Wait()
+}
+
+func printScan(res ScanResult, elapsed time.Duration) {
 	name := ""
 	if res.Hostname != "" {
 		name = "  (" + res.Hostname + ")"
 	}
-	if len(open) == 0 {
-		fmt.Printf("Открытых портов не найдено на %s%s (%.1f с).\n", target, name, elapsed.Seconds())
-		return nil
+	if len(res.Open) == 0 {
+		fmt.Printf("Открытых портов не найдено на %s%s (%.1f с).\n\n", res.Host, name, elapsed.Seconds())
+		return
 	}
-	fmt.Printf("\nХост: %s%s\n\nПОРТ     СТАТУС   СЕРВИС\n", target, name)
+	fmt.Printf("\nХост: %s%s\n\n", res.Host, name)
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ПОРТ\tСТАТУС\tСЕРВИС\tБАННЕР")
 	for _, p := range res.Open {
-		fmt.Printf("%-8d открыт   %s\n", p.Port, p.Service)
+		fmt.Fprintf(tw, "%d\tоткрыт\t%s\t%s\n", p.Port, dash(p.Service), p.Banner)
 	}
-	fmt.Printf("\nОткрытых портов: %d за %.1f с.\n", len(open), elapsed.Seconds())
-	return nil
+	tw.Flush()
+	fmt.Printf("\nОткрытых портов: %d за %.1f с.\n\n", len(res.Open), elapsed.Seconds())
+}
+
+// ExpandTargets turns a target spec into host list: a single host/IP, a CIDR
+// ("192.168.1.0/24") or a last-octet range ("192.168.1.10-50").
+func ExpandTargets(spec string) ([]string, error) {
+	if strings.Contains(spec, "/") {
+		return hostsInCIDR(spec)
+	}
+	if base, hi, ok := strings.Cut(spec, "-"); ok {
+		ip := net.ParseIP(base).To4()
+		end, err := strconv.Atoi(hi)
+		if ip != nil && err == nil && end >= int(ip[3]) && end <= 255 {
+			var out []string
+			for o := int(ip[3]); o <= end; o++ {
+				out = append(out, fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], o))
+			}
+			return out, nil
+		}
+	}
+	return []string{spec}, nil
 }
 
 // toPortInfos attaches service names to a sorted list of open ports.
