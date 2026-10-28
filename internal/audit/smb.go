@@ -88,7 +88,7 @@ func smbV1NegotiateRequest() []byte {
 	}
 	// Body: word count 0, then a byte count and the dialect entry.
 	dialect := append([]byte{0x02}, []byte("NT LM 0.12\x00")...) // 0x02 = dialect marker
-	body := []byte{0x00} // WordCount
+	body := []byte{0x00}                                         // WordCount
 	body = append(body, byte(len(dialect)), 0x00)
 	body = append(body, dialect...)
 

@@ -30,10 +30,10 @@ func TestOrchestratorHealthLine(t *testing.T) {
 	ot.healthChecked = true
 	ot.orchOK, ot.auditOK = true, true
 	ot.scanOK = false
-	ot.scanErrS = "connection refused"
+	ot.scanErrS = `Get "http://127.0.0.1:8082/healthz": dial tcp 127.0.0.1:8082: connect: connection refused`
 
 	out := ot.View()
-	for _, want := range []string{"orchestrator", "audit-svc", "scan-svc", "connection refused"} {
+	for _, want := range []string{"orchestrator", "audit-svc", "scan-svc", "не запущен", "docker compose"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("health line missing %q\n%s", want, out)
 		}
@@ -118,5 +118,25 @@ func TestOrchestratorEscNavigatesFormAndList(t *testing.T) {
 	ot = tb.(*orchestratorTab)
 	if ot.view != orchViewForm {
 		t.Fatalf("view after second Esc = %v, want orchViewForm", ot.view)
+	}
+}
+
+func TestHealthReason(t *testing.T) {
+	cases := map[string]string{
+		`dial tcp 127.0.0.1:8000: connectex: No connection could be made because the target machine actively refused it.`: "не запущен",
+		`Get "http://x/healthz": context deadline exceeded`:                                                               "нет ответа",
+		`dial tcp: lookup orch: no such host`:                                                                             "неизвестный хост",
+		`GET /healthz: status 503`:                                                                                        "status 503",
+	}
+	for in, want := range cases {
+		if got := healthReason(in); got != want {
+			t.Errorf("healthReason(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestTruncIsRuneSafe(t *testing.T) {
+	if got := trunc("Приложения", 5); got != "Прил…" {
+		t.Errorf("trunc = %q, want %q", got, "Прил…")
 	}
 }

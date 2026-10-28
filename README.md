@@ -30,7 +30,7 @@ also available as a scriptable subcommand. The interface is in Russian.
 speedtest            # launch the full-screen dashboard
 ```
 
-- **Tab / Shift+Tab** or **1-9** — switch tabs, **← →** / **h l** also work.
+- **Tab / Shift+Tab** or **1-9, 0** — switch tabs (0 = 10th), **← →** / **h l** also work.
 - **?** — help overlay. **q** / **Ctrl+C** — quit.
 - Each tab drives the same measurement engine as its headless command, so the
   numbers you see live are identical to what `--json` reports.

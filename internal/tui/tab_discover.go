@@ -445,8 +445,8 @@ func trunc(s string, n int) string {
 	if s == "" {
 		return "-"
 	}
-	if len(s) > n {
-		return s[:n-1] + "…"
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
 	}
 	return s
 }

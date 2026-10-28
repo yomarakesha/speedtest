@@ -110,8 +110,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resizeActive()
 				return m, m.tabs[m.active].Init()
 			}
-			if c := msg.String(); len(c) == 1 && c[0] >= '1' && c[0] <= '9' {
-				if idx := int(c[0] - '1'); idx < len(m.tabs) {
+			if c := msg.String(); len(c) == 1 && c[0] >= '0' && c[0] <= '9' {
+				idx := int(c[0] - '1')
+				if c[0] == '0' {
+					idx = 9 // "0" is the 10th tab, as on a keyboard row
+				}
+				if idx < len(m.tabs) {
 					m.active = idx
 					m.resizeActive()
 					return m, m.tabs[m.active].Init()
@@ -189,7 +193,7 @@ func (m model) helpOverlay() string {
 	b.WriteString("\n")
 	for _, l := range []string{
 		"Tab / Shift+Tab — следующая / предыдущая вкладка",
-		"1-8 — быстрый переход к вкладке",
+		"1-9, 0 — быстрый переход к вкладкам 1-10",
 		"← → или h l — переключение вкладок",
 		"? — показать/скрыть эту справку",
 		"q или Ctrl+C — выход",
@@ -201,7 +205,11 @@ func (m model) helpOverlay() string {
 	b.WriteString(m.st.big.Render("Вкладки"))
 	b.WriteString("\n")
 	for i, t := range m.tabs {
-		fmt.Fprintf(&b, "  %s %s\n", m.st.key.Render(fmt.Sprintf("%d", i+1)), t.Title())
+		key := "Tab"
+		if i < 10 {
+			key = fmt.Sprintf("%d", (i+1)%10)
+		}
+		fmt.Fprintf(&b, "  %s %s\n", m.st.key.Render(fmt.Sprintf("%3s", key)), t.Title())
 	}
 
 	if h := m.tabs[m.active].ShortHelp(); len(h) > 0 {
@@ -240,7 +248,7 @@ func (m model) statusBar() string {
 	if m.showHelp {
 		return m.st.statusBar.Render("[?] закрыть справку   [q] выход")
 	}
-	hints := []string{"[Tab] вкладки", "[1-8] переход"}
+	hints := []string{"[Tab] вкладки", "[1-9,0] переход"}
 	if h := m.tabs[m.active].ShortHelp(); len(h) > 0 {
 		hints = append(hints, h...)
 	}

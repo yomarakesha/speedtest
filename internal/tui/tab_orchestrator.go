@@ -520,15 +520,37 @@ func (t *orchestratorTab) healthLine() string {
 		}
 		suffix := ""
 		if errS != "" {
-			suffix = t.sty.muted.Render(" (" + trunc(errS, 24) + ")")
+			suffix = t.sty.muted.Render(" (" + healthReason(errS) + ")")
 		}
 		return t.sty.bad.Render("● "+label) + suffix
 	}
-	return strings.Join([]string{
+	line := strings.Join([]string{
 		dot(t.orchOK, "orchestrator", t.orchErrS),
 		dot(t.auditOK, "audit-svc", t.auditErrS),
 		dot(t.scanOK, "scan-svc", t.scanErrS),
 	}, "   ")
+	if !t.orchOK || !t.auditOK || !t.scanOK {
+		line += "\n" + t.sty.muted.Render("Запуск сервисов: docker compose -f deploy/docker-compose.yml up -d --build")
+	}
+	return line
+}
+
+// healthReason turns a raw HTTP client error into a short human reason: the
+// full "Get \"http://...\": dial tcp ..." text never fits the health strip.
+func healthReason(errS string) string {
+	low := strings.ToLower(errS)
+	switch {
+	case strings.Contains(low, "refused"), strings.Contains(low, "actively refused"):
+		return "не запущен"
+	case strings.Contains(low, "deadline exceeded"), strings.Contains(low, "timeout"):
+		return "нет ответа"
+	case strings.Contains(low, "no such host"):
+		return "неизвестный хост"
+	}
+	if i := strings.LastIndex(errS, ": "); i >= 0 {
+		errS = errS[i+2:]
+	}
+	return trunc(errS, 32)
 }
 
 func (t *orchestratorTab) viewForm(b *strings.Builder) {

@@ -68,7 +68,7 @@ func unauthServiceFindings(host string, timeout time.Duration) []Finding {
 	if body := httpGet(host, 9200, "/", timeout); strings.Contains(body, "\"cluster_name\"") {
 		out = append(out, Finding{
 			Check: "creds.elastic_noauth", Severity: High,
-			Title:  "Elasticsearch доступен без аутентификации",
+			Title: "Elasticsearch доступен без аутентификации",
 		})
 	}
 	return out
