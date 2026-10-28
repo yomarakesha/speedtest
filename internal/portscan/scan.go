@@ -109,7 +109,7 @@ type ScanResult struct {
 // RunScan is the CLI entry point for `speedtest scan <ip|host|cidr|range>...`.
 func RunScan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
-	portSpec := fs.String("ports", "1-1024", "ports: 22,80 | 1-65535 | all | common | web | db | ...")
+	portSpec := fs.String("ports", "1-65535", "ports: 22,80 | 1-65535 | all | common | web | db | ...")
 	timeout := fs.Duration("timeout", 500*time.Millisecond, "per-port connect timeout")
 	workers := fs.Int("workers", 500, "concurrent connections")
 	banner := fs.Bool("banner", false, "identify services (banner / HTTP Server / TLS cert)")

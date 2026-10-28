@@ -144,7 +144,8 @@ grades the increase A-F.
 
 ### Port scan / subnet discovery
 ```sh
-speedtest scan 192.168.1.1 --ports 1-65535 --workers 1000
+speedtest scan 192.168.1.1 --workers 1000                # all ports 1-65535 (default)
+speedtest scan 192.168.1.1 --ports 1-1024                # faster: well-known ports only
 speedtest scan 192.168.1.1 --ports 22,80,443 --banner   # grab service banners
 speedtest scan example.com                              # names resolve once, up front
 speedtest scan example.com --web                         # only web ports + fingerprint them

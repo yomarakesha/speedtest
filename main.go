@@ -87,9 +87,9 @@ const usage = `speedtest - сетевой инструмент (CLI)
         Bufferbloat-тест: задержка в покое и под одновременной
         HTTP-закачкой, прирост задержки и оценка A-F.
 
-  speedtest scan <ip> [--ports 1-1024] [--timeout 500ms] [--workers 500]
-                      [--banner]
-        Скан TCP-портов одного хоста и список открытых. С --banner
+  speedtest scan <ip|cidr|диапазон> [--ports 1-65535] [--timeout 500ms] [--workers 500]
+                                     [--banner]
+        Скан TCP-портов (по умолчанию все 1-65535; --ports 1-1024 — быстрее). С --banner
         снимает баннер сервиса с каждого открытого порта (версия ПО).
 
   speedtest discover [--cidr 192.168.1.0/24[,10.0.0.0/24,...]] [--ports 22,80,...]
